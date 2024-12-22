@@ -99,7 +99,7 @@ jobs:
           yum install -y nodejs
 
       - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v1.13
+        uses: jwlawson/actions-setup-cmake@v2.0
         with:
           cmake-version: '3.28.x'
 
@@ -152,7 +152,7 @@ jobs:
 
       - name: Restore vcpkg binary dir from cache
         id: cache-vcpkg-binary
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_CACHE_DIR }}
           key: vcpkg-cache-centOS-${{ hashFiles('src/vcpkg.json', '.git/modules/vcpkg/HEAD') }}
@@ -200,7 +200,7 @@ jobs:
       - name: Cache vcpkg binary dir
         if: always()
         id: save-cache-vcpkg-binary
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_CACHE_DIR }}
           key: vcpkg-cache-centOS-${{ hashFiles('src/vcpkg.json', '.git/modules/vcpkg/HEAD') }}
@@ -308,7 +308,7 @@ jobs:
     needs: [ build, build_running_image ]
     steps:
       - name: Download build assets
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{needs.build.outputs.TGZ_NAME}}
 
@@ -355,7 +355,7 @@ jobs:
     needs: [ build, build_running_image ]
     steps:
       - name: Download build assets
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{needs.build.outputs.SINGLE_FILE_NAME}}
 
@@ -409,13 +409,13 @@ jobs:
           path: docs/
 
       - name: Download build assets
-        uses: actions/download-artifact@v3 #build use v3
+        uses: actions/download-artifact@v4 #build use v3
         with:
           name: ${{needs.build.outputs.TGZ_NAME}}
           path: _build/
 
       - name: Download build assets single file
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{needs.build.outputs.SINGLE_FILE_NAME}}
           path: .
