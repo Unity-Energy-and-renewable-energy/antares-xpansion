@@ -4,6 +4,7 @@
 #include "BendersBase.h"
 #include "BendersStructsDatas.h"
 #include "ILogger.h"
+#include "LoggerUtils.h"
 #include "SubproblemCut.h"
 #include "SubproblemWorker.h"
 #include "Timer.h"
@@ -11,6 +12,10 @@
 #include "WorkerMaster.h"
 #include "common_mpi.h"
 
+class CriterionCouldNotBeSatisfied
+    : public LogUtils::XpansionError<std::runtime_error> {
+  using LogUtils::XpansionError<std::runtime_error>::XpansionError;
+};
 /*!
  * \class BendersMpi
  * \brief Class use run the benders algorithm in parallel
@@ -19,11 +24,13 @@ class BendersMpi : public BendersBase {
  public:
   ~BendersMpi() override = default;
   BendersMpi(BendersBaseOptions const &options, Logger logger, Writer writer,
-             mpi::environment &env, mpi::communicator &world);
+             mpi::environment &env, mpi::communicator &world,
+             std::shared_ptr<MathLoggerDriver> mathLoggerDriver);
 
   void launch() override;
-  virtual std::string BendersName() const { return "Benders mpi"; }
+  std::string BendersName() const override { return "Benders mpi"; }
   const unsigned int rank_0 = 0;
+  void ExternalLoopCheckFeasibility() override;
 
  protected:
   void free() override;
@@ -34,7 +41,7 @@ class BendersMpi : public BendersBase {
  private:
   void step_1_solve_master();
   void step_2_solve_subproblems_and_build_cuts();
-  void step_4_update_best_solution(int rank, const Timer &timer_master);
+  void step_4_update_best_solution(int rank);
 
   void master_build_cuts(
       std::vector<SubProblemDataMap> gathered_subproblem_map);
@@ -42,7 +49,6 @@ class BendersMpi : public BendersBase {
 
   void solve_master_and_create_trace();
 
-  bool _exceptionRaised = false;
 
   void do_solve_master_create_trace_and_update_cuts();
 
@@ -52,6 +58,9 @@ class BendersMpi : public BendersBase {
   void write_exception_message(const std::exception &ex) const;
 
   void check_if_some_proc_had_a_failure(int success);
+
+  void UpdateOverallCosts();
+  void RunExternalLoopBilevelChecks() override;
   mpi::environment &_env;
   mpi::communicator &_world;
 
@@ -84,4 +93,7 @@ class BendersMpi : public BendersBase {
   void AllReduce(const T &in_value, T &out_value, Op op) const {
     mpi::all_reduce(_world, in_value, out_value, op);
   }
+  virtual std::vector<double>
+  ComputeSubproblemsContributionToOuterLoopCriterion(
+      const SubProblemDataMap &subproblem_data_map);
 };

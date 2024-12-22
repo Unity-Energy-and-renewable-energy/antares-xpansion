@@ -1,6 +1,7 @@
 #include "SolverCbc.h"
 
 #include "COIN_common_functions.h"
+using namespace std::literals;
 
 /*************************************************************************************************
 -----------------------------------    Constructor/Desctructor
@@ -8,20 +9,11 @@
 *************************************************************************************************/
 int SolverCbc::_NumberOfProblems = 0;
 
-SolverCbc::SolverCbc(const std::filesystem::path &log_file) : SolverCbc() {
-  _log_file = log_file;
-  if (_log_file.empty()) {
-    std::cout << "Empty log file name, fallback to default behaviour"
-              << std::endl;
-  } else {
-    if ((_fp = fopen(_log_file.string().c_str(), "a+")) == nullptr) {
-      std::cerr << "Invalid log file name passed as parameter: " << _log_file
-                << std::endl;
-    } else {
-      setvbuf(_fp, nullptr, _IONBF, 0);
-      _clp_inner_solver.messageHandler()->setFilePointer(_fp);
-      _cbc.messageHandler()->setFilePointer(_fp);
-    }
+SolverCbc::SolverCbc(SolverLogManager &log_manager) : SolverCbc() {
+  _fp = log_manager.log_file_ptr;
+  if (_fp) {
+    _clp_inner_solver.messageHandler()->setFilePointer(_fp);
+    _cbc.messageHandler()->setFilePointer(_fp);
   }
 }
 SolverCbc::SolverCbc() {
@@ -34,14 +26,13 @@ SolverCbc::SolverCbc(const std::shared_ptr<const SolverAbstract> toCopy)
   // Try to cast the solver in fictif to a SolverCbc
   if (const auto c = dynamic_cast<const SolverCbc *>(toCopy.get())) {
     _clp_inner_solver = OsiClpSolverInterface(c->_clp_inner_solver);
-    _log_file = toCopy->_log_file;
-    _fp = fopen(_log_file.string().c_str(), "a+");
-    if (_fp != nullptr) {
-      setvbuf(_fp, nullptr, _IONBF, 0);
+
+    defineCbcModelFromInnerSolver();
+    _fp = c->_fp;
+    if (_fp) {
       _clp_inner_solver.messageHandler()->setFilePointer(_fp);
       _cbc.messageHandler()->setFilePointer(_fp);
     }
-    defineCbcModelFromInnerSolver();
   } else {
     _NumberOfProblems -= 1;
     throw InvalidSolverForCopyException(toCopy->get_solver_name(), name_,
@@ -51,10 +42,6 @@ SolverCbc::SolverCbc(const std::shared_ptr<const SolverAbstract> toCopy)
 
 SolverCbc::~SolverCbc() {
   _NumberOfProblems -= 1;
-  if (_fp != nullptr) {
-    fclose(_fp);
-    _fp = nullptr;
-  }
   free();
 }
 
@@ -134,12 +121,16 @@ void SolverCbc::write_prob_mps(const std::filesystem::path &filename) {
     }
   }
 
-  writer.setMpsData(
-      *(_clp_inner_solver.getMatrixByCol()), _clp_inner_solver.getInfinity(),
-      _clp_inner_solver.getColLower(), _clp_inner_solver.getColUpper(),
-      _clp_inner_solver.getObjCoefficients(),
-      hasInteger ? integrality : nullptr, _clp_inner_solver.getRowLower(),
-      _clp_inner_solver.getRowUpper(), colNames, rowNames);
+  {
+    auto mcol = _clp_inner_solver.getMatrixByCol();
+    auto col = *(_clp_inner_solver.getMatrixByCol());
+    auto infinity = _clp_inner_solver.getInfinity();
+    writer.setMpsData(
+        col, infinity, _clp_inner_solver.getColLower(),
+        _clp_inner_solver.getColUpper(), _clp_inner_solver.getObjCoefficients(),
+        hasInteger ? integrality : nullptr, _clp_inner_solver.getRowLower(),
+        _clp_inner_solver.getRowUpper(), colNames, rowNames);
+  }
 
   std::string probName = "";
   _clp_inner_solver.getStrParam(OsiProbName, probName);
@@ -193,7 +184,8 @@ void SolverCbc::setClpSimplexRowNamesFromInnerSolver(ClpSimplex *clps) const {
 
 void SolverCbc::read_prob_mps(const std::filesystem::path &prob_name) {
   int status = _clp_inner_solver.readMps(prob_name.string().c_str());
-  zero_status_check(status, "read problem", LOGLOCATION);
+  zero_status_check(status, " read problem "s + prob_name.string(),
+                    LOGLOCATION);
   defineCbcModelFromInnerSolver();
 }
 
@@ -245,6 +237,22 @@ void SolverCbc::get_obj(double *obj, int first, int last) const {
 
   for (int i = first; i < last + 1; i++) {
     obj[i - first] = internalObj[i];
+  }
+}
+
+void SolverCbc::set_obj_to_zero() {
+  auto ncols = get_ncols();
+  std::vector<double> zeros_val(ncols, 0.0);
+  _clp_inner_solver.setObjective(zeros_val.data());
+}
+
+void SolverCbc::set_obj(const double *obj, int first, int last) {
+  if (last - first + 1 == get_ncols()) {
+    _clp_inner_solver.setObjective(obj);
+  } else {
+    for (int index = first; index < last + 1; ++index) {
+      _clp_inner_solver.setObjCoeff(index, obj[index]);
+    }
   }
 }
 
@@ -312,6 +320,7 @@ void SolverCbc::get_ub(double *ub, int first, int last) const {
   }
 }
 
+// TODO update see SolverCbc::get_col_index
 int SolverCbc::get_row_index(std::string const &name) {
   int id = 0;
   int nrows = get_nrows();
@@ -390,13 +399,22 @@ void SolverCbc::del_rows(int first, int last) {
 void SolverCbc::add_rows(int newrows, int newnz, const char *qrtype,
                          const double *rhs, const double *range,
                          const int *mstart, const int *mclind,
-                         const double *dmatval) {
+                         const double *dmatval,
+                         const std::vector<std::string> &row_names) {
   std::vector<double> rowLower(newrows);
   std::vector<double> rowUpper(newrows);
+  int nrowInit = get_nrows();
+
   coin_common::fill_row_bounds_from_new_rows_data(rowLower, rowUpper, newrows,
                                                   qrtype, rhs);
   _clp_inner_solver.addRows(newrows, mstart, mclind, dmatval, rowLower.data(),
                             rowUpper.data());
+  if (row_names.size() > 0) {
+    int nrowFinal = get_nrows();
+    for (int i = nrowInit; i < nrowFinal; i++) {
+      chg_row_name(i, row_names[i - nrowInit]);
+    }
+  }
 }
 
 void SolverCbc::add_cols(int newcol, int newnz, const double *objx,
@@ -414,6 +432,14 @@ void SolverCbc::add_cols(int newcol, int newnz, const double *objx,
 }
 
 void SolverCbc::add_name(int type, const char *cnames, int indice) {
+  auto error =
+      LOGLOCATION + "ERROR : addnames not implemented in the CLP interface.";
+  throw NotImplementedFeatureSolverException(error);
+}
+
+void SolverCbc::add_names(int type, const std::vector<std::string> &cnames,
+                          int first, int end) {
+  // TODO
   auto error =
       LOGLOCATION + "ERROR : addnames not implemented in the CLP interface.";
   throw NotImplementedFeatureSolverException(error);
@@ -633,7 +659,7 @@ void SolverCbc::set_output_log_level(int loglevel) {
 
   for (const auto message_handler :
        {_clp_inner_solver.messageHandler(), _cbc.messageHandler()}) {
-    if (loglevel > 0) {
+    if (loglevel > 1 && _fp) {
       message_handler->setLogLevel(0, 1);  // Coin messages
       message_handler->setLogLevel(1, 1);  // Clp messages
       message_handler->setLogLevel(2, 1);  // Presolve messages

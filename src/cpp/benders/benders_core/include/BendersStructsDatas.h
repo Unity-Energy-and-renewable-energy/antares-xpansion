@@ -1,10 +1,25 @@
 #pragma once
 
+#include "ILogger.h"
 #include "SubproblemCut.h"
 #include "Worker.h"
 #include "common.h"
-#include "ILogger.h"
 
+struct OuterLoopCurrentIterationData{
+  int benders_num_run = 0;
+  std::vector<double> outer_loop_criterion = {};
+  double max_criterion = 0.;
+  double max_criterion_best_it = 0.;
+  double outer_loop_bilevel_best_ub = +1e20;
+  double external_loop_lambda = 0.;
+  double external_loop_lambda_min = 0.;
+  double external_loop_lambda_max = 0.;
+  std::string max_criterion_area;
+  std::string max_criterion_area_best_it;
+};
+/*! \struct
+ * struct that hold current Benders iteration
+  */
 struct CurrentIterationData {
   double subproblems_walltime;
   double subproblems_cputime;
@@ -15,6 +30,7 @@ struct CurrentIterationData {
   double best_ub;
   int deletedcut;
   int it;
+  double iteration_time;
   bool stop;
   double overall_subpb_cost_under_approx;
   std::vector<double> single_subpb_costs_under_approx;
@@ -28,11 +44,26 @@ struct CurrentIterationData {
   Point max_invest;
   int nsubproblem;
   int master_status;
-  double elapsed_time;
+  double benders_time;
   StoppingCriterion stopping_criterion;
   bool is_in_initial_relaxation;
-  int number_of_subproblem_resolved;
+  int number_of_subproblem_solved;
+  int cumulative_number_of_subproblem_solved;
+  int min_simplexiter;
+  int max_simplexiter;
+  // ugly
+ OuterLoopCurrentIterationData outer_loop_current_iteration_data;
 };
+
+// /*! \struct to store benders cuts data
+//  */
+// struct BendersCuts {
+//   Point x_cut;
+//   SubProblemDataMap subsProblemDataMap;
+// };
+
+// using BendersCutsPerIteration = std::vector<BendersCuts>;
+
 /*!
  * \class WorkerMasterData
  * \brief Class use to store trace information during the algorithm run
@@ -62,8 +93,8 @@ class WorkerMasterData {
   Point get_max_invest() const;
 };
 
-using WorkerMasterDataPtr = std::shared_ptr<WorkerMasterData>;
 struct BendersRelevantIterationsData {
-  WorkerMasterDataPtr last;
-  WorkerMasterDataPtr best;
+  WorkerMasterData last;
+  WorkerMasterData best;
 };
+using WorkerMasterDataVect = std::vector<WorkerMasterData>;

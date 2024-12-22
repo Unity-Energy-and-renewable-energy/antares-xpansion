@@ -35,8 +35,8 @@
 # build
 _build
 _install
-antares-deps
 include/google
+vcpkg_installed
 
 # Cmake generated files
 CMakeCache.txt
@@ -59,3 +59,7 @@ include/google/protobuf/message.h
 
 # vscode
 .vscode
+
+# Local env
+.venv
+vcpkg_installed

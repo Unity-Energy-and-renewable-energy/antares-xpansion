@@ -33,7 +33,7 @@ BENDERS_OPTIONS_MACRO(TRACE, bool, true, asBool())
 BENDERS_OPTIONS_MACRO(SLAVE_WEIGHT, std::string, "CONSTANT", asString())
 
 // If SLAVE_WEIGHT is CONSTANT, set here the divisor required
-BENDERS_OPTIONS_MACRO(SLAVE_WEIGHT_VALUE, double, 1, asInt())
+BENDERS_OPTIONS_MACRO(SLAVE_WEIGHT_VALUE, double, 1, asDouble())
 
 // Name of the master problem file, if different from 'master'
 BENDERS_OPTIONS_MACRO(MASTER_NAME, std::string, "master", asString())
@@ -56,7 +56,7 @@ BENDERS_OPTIONS_MACRO(SOLVER_NAME, std::string, "COIN", asString())
 // json file in output/expansion/
 BENDERS_OPTIONS_MACRO(JSON_FILE, std::string, ".", asString())
 
-// last  iteration json file in output/expansion/
+// last iteration json file in output/expansion/
 BENDERS_OPTIONS_MACRO(LAST_ITERATION_JSON_FILE, std::string, ".", asString())
 // TIME_LIMIT
 BENDERS_OPTIONS_MACRO(TIME_LIMIT, double, 1e12, asDouble())
@@ -72,3 +72,13 @@ BENDERS_OPTIONS_MACRO(LAST_MASTER_BASIS, std::string, "master_last_basis",
 
 // BATCH SIZE (Benders by batch)
 BENDERS_OPTIONS_MACRO(BATCH_SIZE, size_t, 0, asUInt())
+
+// is this an outer Loop
+BENDERS_OPTIONS_MACRO(DO_OUTER_LOOP, bool, false, asBool())
+
+// Outer Loop Options file
+BENDERS_OPTIONS_MACRO(OUTER_LOOP_OPTION_FILE, std::string,
+                      "outer_loop_options.json", asString())
+
+// Outer Loop number of scenarios (mc years)
+BENDERS_OPTIONS_MACRO(OUTER_LOOP_NUMBER_OF_SCENARIOS, unsigned int, 1, asUInt())

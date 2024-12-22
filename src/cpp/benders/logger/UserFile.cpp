@@ -24,7 +24,11 @@ UserFile::UserFile(const std::filesystem::path &filename) {
   }
 }
 
-UserFile::~UserFile() { _file.close(); }
+UserFile::~UserFile() {
+  if (_file.is_open()) {
+    _file.close();
+  }
+}
 
 void UserFile::display_message(const std::string &str) {
   _file << PrefixMessage(LogUtils::LOGLEVEL::INFO, CONTEXT) << str << std::endl;
@@ -33,6 +37,21 @@ void UserFile::display_message(const std::string &str) {
 void UserFile::display_message(const std::string &str,
                                LogUtils::LOGLEVEL level) {
   _file << PrefixMessage(level, CONTEXT) << str << std::endl;
+  _file.flush();
+}
+
+void UserFile::PrintIterationSeparatorBegin() {
+  _file << PrefixMessage(LogUtils::LOGLEVEL::INFO, CONTEXT);
+  std::string sep_msg("/*\\");
+  sep_msg += std::string(74, '-');
+  _file << sep_msg << std::endl;
+  _file.flush();
+}
+void UserFile::PrintIterationSeparatorEnd() {
+  _file << PrefixMessage(LogUtils::LOGLEVEL::INFO, CONTEXT);
+  std::string sep_msg(74, '-');
+  sep_msg = "\\*/" + sep_msg;
+  _file << sep_msg << std::endl;
   _file.flush();
 }
 
@@ -140,7 +159,7 @@ void UserFile::LogAtSwitchToInteger() {
         << std::endl;
   _file.flush();
 }
-void UserFile::cumulative_number_of_sub_problem_resolved(int number) {
+void UserFile::cumulative_number_of_sub_problem_solved(int number) {
   _file << PrefixMessage(LogUtils::LOGLEVEL::INFO, CONTEXT) << indent_1
         << "cumulative number of call to solver (only for subproblems) : "
         << number << std::endl;

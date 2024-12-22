@@ -2,21 +2,20 @@
     Class to work on config
 """
 
-import glob
 import json
 import os
 import re
 import shutil
 import sys
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 from antares_xpansion.chronicles_checker import ChronicleChecker
-from antares_xpansion.logger import step_logger
 from antares_xpansion.general_data_reader import GeneralDataIniReader
 from antares_xpansion.input_checker import check_candidates_file, check_options
 from antares_xpansion.launcher_options_default_value import LauncherOptionsDefaultValues
 from antares_xpansion.launcher_options_keys import LauncherOptionsKeys
+from antares_xpansion.logger import step_logger
 from antares_xpansion.optimisation_keys import OptimisationKeys
 from antares_xpansion.xpansionConfig import XpansionConfig
 from antares_xpansion.xpansion_study_reader import XpansionStudyReader
@@ -106,6 +105,9 @@ class ConfigLoader:
         )]
         self._config.allow_run_as_root = options[
             LauncherOptionsKeys.allow_run_as_root_key()
+        ]
+        self._config.memory = options[
+            LauncherOptionsKeys.memory_key()
         ]
 
     def _verify_settings_ini_file_exists(self):
@@ -346,11 +348,14 @@ class ConfigLoader:
             return ""
         return self._get_constraints_file_path_in_constraints_dir(additional_constraints_filename)
 
+    def memory(self):
+        return self._config.memory
+
     def simulation_lp_path(self):
         return self._simulation_lp_path()
 
     def _simulation_lp_path(self):
-        return self.xpansion_simulation_output() / "lp"
+        return Path(self.xpansion_simulation_output()) / "lp"
 
     def xpansion_simulation_output(self) -> Path:
         if self._xpansion_simulation_name == "last":
@@ -482,9 +487,11 @@ class ConfigLoader:
         options_values[
             OptimisationKeys.last_mps_master_name_key()
         ] = self._config.LAST_MASTER_MPS
-        options_values["LAST_MASTER_BASIS"] = self._config.LAST_MASTER_BASIS
-        options_values[OptimisationKeys.batch_size_key()
-                       ] = self.get_batch_size()
+        options_values[OptimisationKeys.last_master_basis_key()] = self._config.LAST_MASTER_BASIS
+        options_values[OptimisationKeys.batch_size_key()] = self.get_batch_size()
+        options_values[OptimisationKeys.do_outer_loop_key()] = self._config.method == "outer_loop"
+        options_values[OptimisationKeys.outer_loop_option_file_key()] = self.outer_loop_options_path()
+        options_values[OptimisationKeys.outer_loop_number_of_scenarios_key()] = len(self.active_years)
         # generate options file for the solver
         with open(self.options_file_path(), "w") as options_file:
             json.dump(options_values, options_file, indent=4)
@@ -501,17 +508,39 @@ class ConfigLoader:
         """
         return last simulation name
         """
-        self._last_study = self.last_modified_study(self.antares_output())
+        self._last_study = self.last_modified_study(Path(self.antares_output()))
 
         self._set_xpansion_simulation_name()
+    class NotAnXpansionOutputDir(Exception):
+        pass
 
     def _set_xpansion_simulation_name(self):
-        if self.step() in ["resume", "sensitivity"] : 
+        xpansion_dir_suffix ="-Xpansion"
+        self._xpansion_simulation_name = self._last_study
+
+        if self.step() in ["resume", "sensitivity"] :
             self._xpansion_simulation_name = self._last_study
             if self.is_zip(self._last_study):
                 self._xpansion_simulation_name = self._last_study.parent / self._last_study.stem
                 with zipfile.ZipFile(self._last_study, 'r') as output_zip:
                     output_zip.extractall(self._xpansion_simulation_name)
+        elif self.step() == "benders":
+            if self.is_zip(self._last_study):
+                raise ConfigLoader.NotAnXpansionOutputDir(
+                    f"Error! {self._last_study} is not an Xpansion output directory"
+                )
+
+        elif self.step() == "problem_generation":
+            if not self.is_zip(self._last_study):
+                if(not self._last_study.name.endswith(xpansion_dir_suffix)):
+                    raise ConfigLoader.NotAnXpansionOutputDir(f"Error! {self._last_study} is not an Xpansion output directory")
+                else:
+                    self._xpansion_simulation_name = self._last_study
+                    self._last_study = self._last_study.parent / (
+                            self._last_study.stem[: -len(xpansion_dir_suffix)] + ".zip"
+                    )
+        elif self.step() == "full" and self.memory():
+            self._xpansion_simulation_name = self._last_study
         else:
             self._xpansion_simulation_name = self._last_study.parent / \
                 (self._last_study.stem+"-Xpansion")
@@ -519,7 +548,7 @@ class ConfigLoader:
     def is_zip(self, study):
         _, ext = os.path.splitext(study)
         return ext == ".zip" 
-    
+
     def update_last_study_with_sensitivity_results(self):
         if self.is_zip(self._last_study):
             os.remove(self._last_study)
@@ -527,14 +556,17 @@ class ConfigLoader:
             if(os.path.exists(self._xpansion_simulation_name)):
                 shutil.rmtree(self._xpansion_simulation_name)
 
-    def is_antares_study_output(self, study):
+    def is_antares_study_output(self, study: Path):
         _, ext = os.path.splitext(study)
-        return ext == ".zip" or os.path.isdir(study)
+        if self.memory() and '-Xpansion' not in study.name:  # memory mode we work with files essentially
+            return os.path.isdir(study)
+        else:
+            return ext == ".zip" or os.path.isdir(study)
 
-    def last_modified_study(self, root_dir)-> Path: 
+    def last_modified_study(self, root_dir:Path)-> Path: 
         list_dir = os.listdir(root_dir)
         list_of_studies = filter(
-            lambda x: self.is_antares_study_output(os.path.join(root_dir, x)), list_dir
+            lambda x: self.is_antares_study_output(root_dir / x), list_dir
         )
         # Sort list of files based on last modification time in ascending order
         sort_studies = sorted(
@@ -544,7 +576,7 @@ class ConfigLoader:
         )
         if len(sort_studies) == 0:
             raise ConfigLoader.MissingAntaresOutput("No Antares output is found")
-        
+
         last_study = Path(root_dir) / sort_studies[-1]
         return last_study
 
@@ -590,9 +622,6 @@ class ConfigLoader:
     def benders_exe(self):
         return self.exe_path(self._config.BENDERS)
 
-    def benders_by_batch_exe(self):
-        return self.exe_path(self._config.BENDERS_BY_BATCH)
-
     def merge_mps_exe(self):
         return self.exe_path(self._config.MERGE_MPS)
 
@@ -607,6 +636,9 @@ class ConfigLoader:
 
     def antares_archive_updater_exe(self):
         return self.exe_path(self._config.ANTARES_ARCHIVE_UPDATER)
+
+    def outer_loop_exe(self):
+        return self.exe_path(self._config.OUTER_LOOP)
 
     def method(self):
         return self._config.method
@@ -703,3 +735,16 @@ class ConfigLoader:
     def check_NTC_column_constraints(self, antares_version):
         checker = ChronicleChecker(self._config.data_dir, antares_version)
         checker.check_chronicle_constraints()
+
+    def mpi_exe(self):
+        return self.exe_path(Path(self._config.MPIEXEC).name)
+
+    def outer_loop_options_path(self):
+        return os.path.join(self.outer_loop_dir(), self._config.OUTER_LOOP_FILE)
+
+    def outer_loop_dir(self):
+        return os.path.normpath(os.path.join(
+            self.data_dir(),
+            self._config.USER,
+            self._config.EXPANSION,
+            self._config.OUTER_LOOP_DIR))

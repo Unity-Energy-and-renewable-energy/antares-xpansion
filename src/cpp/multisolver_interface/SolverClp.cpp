@@ -1,6 +1,7 @@
 #include "SolverClp.h"
 
 #include "COIN_common_functions.h"
+using namespace std::literals;
 
 /*************************************************************************************************
 -----------------------------------    Constructor/Desctructor
@@ -8,38 +9,25 @@
 *************************************************************************************************/
 int SolverClp::_NumberOfProblems = 0;
 
-SolverClp::SolverClp(const std::filesystem::path &log_file) : SolverClp() {
-  _log_file = log_file;
-  if (_log_file.empty()) {
-    std::cout << "Empty log file name, fallback to default behaviour"
-              << std::endl;
-  } else {
-    if ((_fp = fopen(_log_file.string().c_str(), "a+")) == NULL) {
-      std::cerr << "Invalid log file name passed as parameter: " << _log_file
-                << std::endl;
-    } else {
-      setvbuf(_fp, NULL, _IONBF, 0);
-      _clp.messageHandler()->setFilePointer(_fp);
-    }
+SolverClp::SolverClp(SolverLogManager &log_manager) : SolverClp() {
+  _fp = log_manager.log_file_ptr;
+  if (_fp) {
+    _clp.messageHandler()->setFilePointer(_fp);
   }
 }
 SolverClp::SolverClp() {
   _NumberOfProblems += 1;
-  _fp = nullptr;
   set_output_log_level(0);
 }
 
 SolverClp::SolverClp(const std::shared_ptr<const SolverAbstract> toCopy)
     : SolverClp() {
-  _fp = nullptr;
   // Try to cast the solver in fictif to a SolverClp
   if (const auto c = dynamic_cast<const SolverClp *>(toCopy.get())) {
     _clp = ClpSimplex(c->_clp);
-    _log_file = toCopy->_log_file;
-    _fp = fopen(_log_file.string().c_str(), "a+");
-    if (_fp != nullptr) {
-      setvbuf(_fp, nullptr, _IONBF, 0);
-      _clp.messageHandler()->setFilePointer(_fp);
+    _fp = c->_fp;
+    if (_fp) {
+      _clp.messageHandler()->setFilePointer(c->_fp);
     }
   } else {
     _NumberOfProblems -= 1;
@@ -50,10 +38,6 @@ SolverClp::SolverClp(const std::shared_ptr<const SolverAbstract> toCopy)
 
 SolverClp::~SolverClp() {
   _NumberOfProblems -= 1;
-  if (_fp != nullptr) {
-    fclose(_fp);
-    _fp = nullptr;
-  }
   free();
 }
 
@@ -101,7 +85,7 @@ void SolverClp::write_basis(const std::filesystem::path &filename) {
 
 void SolverClp::read_prob_mps(const std::filesystem::path &filename) {
   int status = _clp.readMps(filename.string().c_str(), true, false);
-  zero_status_check(status, "Clp readMps", LOGLOCATION);
+  zero_status_check(status, " Clp readMps "s + filename.string(), LOGLOCATION);
 }
 
 void SolverClp::read_prob_lp(const std::filesystem::path &filename) {
@@ -143,6 +127,22 @@ void SolverClp::get_obj(double *obj, int first, int last) const {
 
   for (int i = first; i < last + 1; i++) {
     obj[i - first] = internalObj[i];
+  }
+}
+
+void SolverClp::set_obj_to_zero() {
+  auto ncols = get_ncols();
+  std::vector<double> zeros_val(ncols, 0.0);
+  _clp.setRowObjective(zeros_val.data());
+}
+
+void SolverClp::set_obj(const double *obj, int first, int last) {
+  if (last - first + 1 == get_ncols()) {
+    _clp.setRowObjective(obj);
+  } else {
+    for (int index = first; index < last + 1; ++index) {
+      _clp.setObjCoeff(index, obj[index]);
+    }
   }
 }
 
@@ -273,14 +273,22 @@ void SolverClp::del_rows(int first, int last) {
 void SolverClp::add_rows(int newrows, int newnz, const char *qrtype,
                          const double *rhs, const double *range,
                          const int *mstart, const int *mclind,
-                         const double *dmatval) {
+                         const double *dmatval,
+                         const std::vector<std::string> &row_names) {
   std::vector<double> rowLower(newrows);
   std::vector<double> rowUpper(newrows);
+  int nrowInit = get_nrows();
   coin_common::fill_row_bounds_from_new_rows_data(rowLower, rowUpper, newrows,
                                                   qrtype, rhs);
 
   _clp.addRows(newrows, rowLower.data(), rowUpper.data(), mstart, mclind,
                dmatval);
+  if (row_names.size() > 0) {
+    int nrowFinal = get_nrows();
+    for (int i = nrowInit; i < nrowFinal; i++) {
+      chg_row_name(i, row_names[i - nrowInit]);
+    }
+  }
 }
 
 void SolverClp::add_cols(int newcol, int newnz, const double *objx,
@@ -297,6 +305,13 @@ void SolverClp::add_cols(int newcol, int newnz, const double *objx,
 }
 
 void SolverClp::add_name(int type, const char *cnames, int indice) {
+  auto error =
+      LOGLOCATION + "ERROR : addnames not implemented in the CLP interface.";
+  throw NotImplementedFeatureSolverException(error);
+}
+void SolverClp::add_names(int type, const std::vector<std::string> &cnames,
+                          int first, int end) {
+  // TODO
   auto error =
       LOGLOCATION + "ERROR : addnames not implemented in the CLP interface.";
   throw NotImplementedFeatureSolverException(error);
@@ -504,7 +519,7 @@ void SolverClp::get_mip_sol(double *primals) {
 ---------------------------
 *************************************************************************************************/
 void SolverClp::set_output_log_level(int loglevel) {
-  if (loglevel > 0) {
+  if (loglevel > 1 && _fp) {
     _clp.messageHandler()->setLogLevel(1);
   } else {
     _clp.messageHandler()->setLogLevel(0);

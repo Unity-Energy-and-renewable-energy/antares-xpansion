@@ -1,16 +1,10 @@
-from typing import Text
-import pytest
-import os
-from pathlib import Path
-from datetime import date, datetime
-from unittest.mock import ANY, mock_open, patch
 import shutil
+from datetime import date, datetime
+from pathlib import Path
+from unittest.mock import patch
 
-from file_creation import _create_weight_file
+import pytest
 from antares_xpansion.problem_generator_driver import ProblemGeneratorData, ProblemGeneratorDriver
-from antares_xpansion.antares_driver import AntaresDriver
-from antares_xpansion.xpansion_study_reader import XpansionStudyReader
-from antares_xpansion.general_data_reader import GeneralDataIniReader
 
 SUBPROCESS_RUN = "antares_xpansion.problem_generator_driver.subprocess.run"
 zipfile_ZipFile = "antares_xpansion.problem_generator_driver.zipfile.ZipFile"
@@ -34,7 +28,8 @@ class TestProblemGeneratorDriver:
                                                         weight_file_name_for_lp="",
                                                         lp_namer_exe_path=Path(
                                                             ""),
-                                                        active_years=[])
+                                                        active_years=[],
+                                                        memory=False)
 
     def test_problem_generator_data(self):
 
@@ -74,7 +69,8 @@ class TestProblemGeneratorDriver:
                                              user_weights_file_path=Path(""),
                                              weight_file_name_for_lp="",
                                              lp_namer_exe_path=lp_namer_file,
-                                             active_years=[])
+                                             active_years=[],
+                                             memory=False)
         self._create_empty_area_file(tmp_path)
         self._create_empty_interco_file(tmp_path)
         output_zipped = get_zipped_output(tmp_path)
@@ -101,7 +97,8 @@ class TestProblemGeneratorDriver:
                                              user_weights_file_path=Path(""),
                                              weight_file_name_for_lp="",
                                              lp_namer_exe_path=lp_namer_file,
-                                             active_years=[])
+                                             active_years=[],
+                                             memory=False)
         self._create_empty_area_file(tmp_path)
         self._create_empty_interco_file(tmp_path)
         output_zipped = get_zipped_output(tmp_path)

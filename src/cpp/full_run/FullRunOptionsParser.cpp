@@ -4,28 +4,17 @@
 namespace po = boost::program_options;
 
 FullRunOptionsParser::FullRunOptionsParser() : ProblemGenerationExeOptions() {
-  AddOptions()("method,m", po::value<std::string>(&method_str_)->required(),
-               "benders method")(
+  AddOptions()(
       "benders_options,b",
       po::value<std::filesystem::path>(&benders_options_file_)->required(),
       "benders options file")(
       "solution,s",
       po::value<std::filesystem::path>(&solutionFile_)->required(),
-      "path to json solution file");
+      "path to json solution file")(
+      "solver", po::value<std::string>(&solver_)->default_value("benders"),
+      "solver (benders, outer_loop, ");  // Add mergeMps?
 }
 void FullRunOptionsParser::Parse(unsigned int argc, const char* const* argv) {
-  OptionsParser::Parse(argc, argv);
-  SetMethod();
+  ProblemGenerationExeOptions::Parse(argc, argv);
 }
-void FullRunOptionsParser::SetMethod() {
-  if (method_str_ == "benders") {
-    method_ = BENDERSMETHOD::BENDERS;
-  } else if (method_str_ == "benders_by_batch") {
-    method_ = BENDERSMETHOD::BENDERSBYBATCH;
-  } else if (method_str_ == "mergeMPS") {
-    method_ = BENDERSMETHOD::MERGEMPS;
-  } else {
-    throw FullRunOptionsParser::FullRunOptionInvalidMethod(LOGLOCATION +
-                                                           method_str_);
-  }
-}
+std::string FullRunOptionsParser::Solver() const { return solver_; }

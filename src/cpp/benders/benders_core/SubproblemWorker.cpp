@@ -13,9 +13,10 @@
 SubproblemWorker::SubproblemWorker(
     VariableMap const &variable_map, const std::filesystem::path &path_to_mps,
     double const &slave_weight, const std::string &solver_name,
-    const int log_level, const std::filesystem::path &log_name, Logger logger)
+    const int log_level, SolverLogManager&solver_log_manager,
+    Logger logger)
     : Worker(logger) {
-  init(variable_map, path_to_mps, solver_name, log_level, log_name);
+  init(variable_map, path_to_mps, solver_name, log_level, solver_log_manager);
 
   int mps_ncols(_solver->get_ncols());
   DblVector obj_func_coeffs(mps_ncols);
@@ -64,5 +65,20 @@ void SubproblemWorker::get_subgradient(Point &s) const {
   solver_getlpreducedcost(_solver, ptr);
   for (auto const &kvp : _id_to_name) {
     s[kvp.second] = +ptr[kvp.first];
+  }
+}
+
+/*!
+ *  \brief Return the solutions values of a problem
+ *
+ *  \param lb : reference to a map
+ */
+void SubproblemWorker::get_solution(std::vector<double> &solution) const {
+  solution = std::vector<double>(_solver->get_ncols());
+
+  if (_solver->get_n_integer_vars() > 0) {
+    _solver->get_mip_sol(solution.data());
+  } else {
+    _solver->get_lp_sol(solution.data(), NULL, NULL);
   }
 }

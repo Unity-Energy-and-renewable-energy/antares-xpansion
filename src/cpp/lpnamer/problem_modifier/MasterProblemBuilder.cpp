@@ -7,21 +7,21 @@
 
 #include <algorithm>
 #include <unordered_map>
+#include <utility>
 
 #include "LogUtils.h"
 
-MasterProblemBuilder::MasterProblemBuilder(
-    const std::string& master_formulation)
-    : _master_formulation(master_formulation) {}
+MasterProblemBuilder::MasterProblemBuilder(std::string master_formulation)
+    : _master_formulation(std::move(master_formulation)) {}
 
 std::shared_ptr<SolverAbstract> MasterProblemBuilder::build(
     const std::string& solverName, const std::vector<Candidate>& candidates,
-    const std::filesystem::path& log_file_path) {
+    SolverLogManager& solver_log_manager) {
   _indexOfNvar.clear();
   _indexOfPmaxVar.clear();
 
   SolverFactory factory;
-  auto master_l = factory.create_solver(solverName, log_file_path);
+  auto master_l = factory.create_solver(solverName, solver_log_manager);
 
   addVariablesPmaxOnEachCandidate(candidates, master_l);
 
@@ -42,7 +42,7 @@ std::shared_ptr<SolverAbstract> MasterProblemBuilder::build(
 
 void MasterProblemBuilder::addPmaxConstraint(
     const std::vector<Candidate>& candidatesInteger, SolverAbstract& master_l) {
-  auto n_integer = (int)candidatesInteger.size();
+  auto n_integer = static_cast<unsigned>(candidatesInteger.size());
   if (n_integer > 0) {
     std::vector<double> dmatval;
     std::vector<int> colind;
@@ -63,7 +63,7 @@ void MasterProblemBuilder::addPmaxConstraint(
       int nVarColumNumber = nbColPmaxVar + positionInIntegerCandidadeList;
 
       // pMax  - n unit_size = 0
-      rstart.push_back((int)dmatval.size());
+      rstart.push_back(static_cast<int>(dmatval.size()));
       rhs.push_back(0);
       rowtype.push_back('E');
 

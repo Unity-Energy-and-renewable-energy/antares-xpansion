@@ -8,14 +8,14 @@ import sys
 from pathlib import Path
 
 from antares_xpansion.antares_driver import AntaresDriver
-from antares_xpansion.benders_driver import BendersDriver
+from antares_xpansion.benders_driver import BendersDriver, SolversExe
 from antares_xpansion.config_loader import ConfigLoader
-from antares_xpansion.logger import step_logger
+from antares_xpansion.full_run_driver import FullRunDriver
 from antares_xpansion.general_data_processor import GeneralDataProcessor
+from antares_xpansion.logger import step_logger
 from antares_xpansion.problem_generator_driver import ProblemGeneratorDriver, ProblemGeneratorData
 from antares_xpansion.resume_study import ResumeStudy, ResumeStudyData
 from antares_xpansion.sensitivity_driver import SensitivityDriver
-from antares_xpansion.full_run_driver import FullRunDriver
 from antares_xpansion.study_updater_driver import StudyUpdaterDriver
 
 
@@ -37,19 +37,23 @@ class XpansionDriver:
         self.antares_driver = AntaresDriver(
             self.config_loader.antares_exe()
         )
-        self.problem_generator_driver = ProblemGeneratorDriver(ProblemGeneratorData(keep_mps=self.config_loader.keep_mps(),
-                                                                                    additional_constraints=self.config_loader.additional_constraints(),
-                                                                                    user_weights_file_path=self.config_loader.weights_file_path(),
-                                                                                    weight_file_name_for_lp=self.config_loader.weight_file_name(),
-                                                                                    lp_namer_exe_path=self.config_loader.lp_namer_exe(),
-                                                                                    active_years=self.config_loader.active_years
-                                                                                    ))
+        data = ProblemGeneratorData(keep_mps=self.config_loader.keep_mps(),
+                                    additional_constraints=self.config_loader.additional_constraints(),
+                                    user_weights_file_path=self.config_loader.weights_file_path(),
+                                    weight_file_name_for_lp=self.config_loader.weight_file_name(),
+                                    lp_namer_exe_path=self.config_loader.lp_namer_exe(),
+                                    active_years=self.config_loader.active_years,
+                                    memory=self.config_loader.memory(),
+                                    )
+        self.problem_generator_driver = ProblemGeneratorDriver(data)
 
         self.benders_driver = BendersDriver(
-            self.config_loader.benders_exe(),
-            self.config_loader.benders_by_batch_exe(),
-            self.config_loader.merge_mps_exe(),
-            self.config_loader.options_file_name()
+            SolversExe(
+                self.config_loader.benders_exe(),
+                self.config_loader.merge_mps_exe(),
+                self.config_loader.outer_loop_exe()),
+            self.config_loader.options_file_name(),
+            self.config_loader.mpi_exe(),
         )
 
         self.study_update_driver = StudyUpdaterDriver(
@@ -67,7 +71,7 @@ class XpansionDriver:
         launch antares xpansion steps
         """
 
-        if self.config_loader.step() == "full":
+        if self.config_loader.step() == "full" and not self.config_loader.memory():
             self.launch_antares_step()
             self.logger.info("Post Antares")
             self.problem_generator_driver.set_output_path(
@@ -83,6 +87,14 @@ class XpansionDriver:
                                         self.config_loader.oversubscribe(),
                                         self.config_loader.allow_run_as_root())
             self.clean_step()
+
+        elif self.config_loader.step() == "full" and self.config_loader.memory():
+            self.update_study_settings(memory_mode=True)
+            self.launch_problem_generation_step_memory()
+            self.launch_benders_step()
+            self.study_update_driver.launch(
+                self.config_loader.xpansion_simulation_output(), self.config_loader.json_file_path(),
+                self.config_loader.keep_mps())
 
         elif self.config_loader.step() == "antares":
             self.launch_antares_step()
@@ -119,9 +131,7 @@ class XpansionDriver:
         shutil.rmtree(self.config_loader.xpansion_simulation_output())
 
     def launch_antares_step(self):
-        self._configure_general_data_processor()
-        self._backup_general_data_ini()
-        self._update_general_data_ini()
+        self.update_study_settings(memory_mode=False)
         try:
             ret = self.antares_driver.launch(
                 self.config_loader.data_dir(), self.config_loader.antares_n_cpu())
@@ -137,12 +147,20 @@ class XpansionDriver:
             self._revert_general_data_ini()
             raise e
 
-    def _update_general_data_ini(self):
-        self.gen_data_proc.change_general_data_file_to_configure_antares_execution()
+    def update_study_settings(self, memory_mode=False):
+        self._configure_general_data_processor()
+        self._backup_general_data_ini()
+        self._update_general_data_ini(memory_mode)
+
+    def _update_general_data_ini(self, memory_mode=False):
+        self.gen_data_proc.change_general_data_file_to_configure_antares_execution(memory_mode)
 
     def launch_problem_generation_step(self):
         self.problem_generator_driver.launch(
             self.config_loader.simulation_output_path(), self.config_loader.is_relaxed())
+
+    def launch_problem_generation_step_memory(self):
+        self.problem_generator_driver.launch_memory(self.config_loader.data_dir(), self.config_loader.is_relaxed())
 
     def launch_benders_step(self):
         self.config_loader.benders_pre_actions()
@@ -178,7 +196,6 @@ class XpansionDriver:
             self.config_loader.launcher_options_file_path(),
             self.config_loader.options_file_name(),
             self.config_loader.benders_exe(),
-            self.config_loader.benders_by_batch_exe(),
             self.config_loader.merge_mps_exe())
 
         resume_study = ResumeStudy(resume_study_data)

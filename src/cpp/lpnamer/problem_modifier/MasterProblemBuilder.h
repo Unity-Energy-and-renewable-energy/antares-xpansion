@@ -16,10 +16,10 @@ const std::string NB_UNITS_VAR_PREFIX("nb_units_");
 
 class MasterProblemBuilder {
  public:
-  explicit MasterProblemBuilder(const std::string& master_formulation);
+  explicit MasterProblemBuilder(std::string master_formulation);
   std::shared_ptr<SolverAbstract> build(
       const std::string& solverName, const std::vector<Candidate>& candidates,
-      const std::filesystem::path& log_file_path);
+      SolverLogManager& solver_log_manager);
 
  private:
   void addNvarOnEachIntegerCandidate(

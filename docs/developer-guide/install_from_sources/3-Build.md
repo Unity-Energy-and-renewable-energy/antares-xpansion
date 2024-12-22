@@ -1,9 +1,10 @@
 # Build
 
 ## Environnement settings
-On Centos, enable `devtoolset-9` and `rh-git227` and load `mpi` module:
+
+On Centos, enable `devtoolset-10` and `rh-git227` and load `mpi` module:
 ```
-scl enable devtoolset-9 bash
+scl enable devtoolset-10 bash
 source /opt/rh/rh-git227/enable
 module load mpi
 ```
@@ -59,17 +60,17 @@ Additionnal options for Xpress use:
 === "Windows"
 
     ```
-    cmake --build _build --config Release -j8
+    cmake --build _build --config Release -j8 --target install
     ```
 === "Centos"
 
     ```
-    cmake3 --build _build --config Release -j8
+    cmake3 --build _build --config Release -j8 --target install
     ```
 === "Ubuntu"
 
     ```
-    cmake --build _build --config Release -j8
+    cmake --build _build --config Release -j8 --target install
     ```
 !!! Note
     Compilation can be done on several processor with the `-j` option.

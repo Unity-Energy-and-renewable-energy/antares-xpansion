@@ -21,6 +21,7 @@ class ProblemGeneratorData:
     weight_file_name_for_lp: str
     lp_namer_exe_path: Path
     active_years: List
+    memory: bool
 
 
 class ProblemGeneratorDriver:
@@ -61,6 +62,7 @@ class ProblemGeneratorDriver:
         self.is_relaxed = False
         self._lp_path = None
         self.logger = step_logger(__name__, __class__.__name__)
+        self.memory = problem_generator_data.memory
 
     def launch(self, output_path: Path, is_relaxed: bool):
         """
@@ -75,12 +77,21 @@ class ProblemGeneratorDriver:
         self.is_relaxed = is_relaxed
         self._lp_step()
 
+    def launch_memory(self, study_path: Path, is_relaxed: bool):
+        """
+            problem generation step : getnames + lp_namer
+        """
+        self.logger.info("Problem Generation")
+        self.study_path = study_path
+        self.is_relaxed = is_relaxed
+        self._lp_step()
+
     def set_output_path(self, output_path):
 
         if output_path.exists():
             self._output_path = output_path
             self.xpansion_output_dir = output_path.parent / \
-                (output_path.stem+"-Xpansion")
+                                       (output_path.stem + "-Xpansion")
             if self.xpansion_output_dir.exists():
                 shutil.rmtree(self.xpansion_output_dir)
             os.makedirs(self.xpansion_output_dir)
@@ -118,8 +129,10 @@ class ProblemGeneratorDriver:
 
     def lp_namer_options(self):
         is_relaxed = 'relaxed' if self.is_relaxed else 'integer'
-        ret = ["-o", str(self.xpansion_output_dir), "-a",
-               str(self.output_path), "-f", is_relaxed]
+        if self.memory:
+            ret = ["--study", str(self.study_path), "-f", is_relaxed]  # study/output/xpansion_output_dir
+        else:
+            ret = ["-a", str(self.output_path), "-f", is_relaxed]
         if self.weight_file_name_for_lp:
             ret.extend(["-w", str(self.user_weights_file_path)])
 

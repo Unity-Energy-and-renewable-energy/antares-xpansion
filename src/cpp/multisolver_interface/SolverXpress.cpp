@@ -3,9 +3,12 @@
 #include <cassert>
 #include <cstring>
 #include <map>
+#include <numeric>
 
 #include "StringManip.h"
 
+using namespace LoadXpress;
+using namespace std::literals;
 /*************************************************************************************************
 -----------------------------------    Constructor/Desctructor
 --------------------------------
@@ -14,10 +17,9 @@ int SolverXpress::_NumberOfProblems = 0;
 std::mutex SolverXpress::license_guard;
 const std::map<int, std::string> TYPETONAME = {{1, "rows"}, {2, "columns"}};
 
-SolverXpress::SolverXpress(const std::filesystem::path &log_file)
-    : SolverXpress() {
-  _log_file = log_file;
-  if (_log_file != "") {
+SolverXpress::SolverXpress(SolverLogManager &log_manager) : SolverXpress() {
+  if (log_manager.log_file_path != "") {
+    _log_file = log_manager.log_file_path;
     _log_stream.open(_log_file, std::ofstream::out | std::ofstream::app);
     add_stream(_log_stream);
   }
@@ -26,6 +28,8 @@ SolverXpress::SolverXpress() {
   std::lock_guard<std::mutex> guard(license_guard);
   int status = 0;
   if (_NumberOfProblems == 0) {
+    LoadXpress::XpressLoader xpress_loader;
+    xpress_loader.initXpressEnv();
     status = XPRSinit(NULL);
     zero_status_check(status, "initialize XPRESS environment", LOGLOCATION);
   }
@@ -162,7 +166,7 @@ void SolverXpress::read_prob(const char *prob_name, const char *flags) {
   */
 
   status = XPRSreadprob(_xprs, prob_name, flags);
-  zero_status_check(status, "read problem", LOGLOCATION);
+  zero_status_check(status, " read problem "s + prob_name, LOGLOCATION);
 
   // If param KEEPNROWS not -1 remove first row which is the objective function
   if (keeprows != -1) {
@@ -218,6 +222,19 @@ void SolverXpress::get_obj(double *obj, int first, int last) const {
   zero_status_check(status, "get objective function", LOGLOCATION);
 }
 
+void SolverXpress::set_obj_to_zero() {
+  auto ncols = get_ncols();
+  std::vector<double> zeros_val(ncols, 0.0);
+  set_obj(zeros_val.data(), 0, ncols);
+}
+
+void SolverXpress::set_obj(const double *obj, int first, int last) {
+  auto ncols = last - first + 1;
+  std::vector<int> col_ind(ncols);
+  std::iota(col_ind.begin(), col_ind.end(), first);
+  int status = XPRSchgobj(_xprs, ncols, col_ind.data(), obj);
+  zero_status_check(status, "set objective function", LOGLOCATION);
+}
 void SolverXpress::get_rows(int *mstart, int *mclind, double *dmatval, int size,
                             int *nels, int first, int last) const {
   int status =
@@ -337,10 +354,16 @@ void SolverXpress::del_rows(int first, int last) {
 void SolverXpress::add_rows(int newrows, int newnz, const char *qrtype,
                             const double *rhs, const double *range,
                             const int *mstart, const int *mclind,
-                            const double *dmatval) {
+                            const double *dmatval,
+                            const std::vector<std::string> &row_names) {
+  int nrowInit = get_nrows();
   int status = XPRSaddrows(_xprs, newrows, newnz, qrtype, rhs, range, mstart,
                            mclind, dmatval);
   zero_status_check(status, "add rows", LOGLOCATION);
+  if (row_names.size() > 0) {
+    int nrowFinal = get_nrows();
+    add_names(1, row_names, nrowInit, nrowFinal - 1);
+  }
 }
 
 void SolverXpress::add_cols(int newcol, int newnz, const double *objx,
@@ -354,6 +377,17 @@ void SolverXpress::add_cols(int newcol, int newnz, const double *objx,
 
 void SolverXpress::add_name(int type, const char *cnames, int indice) {
   int status = XPRSaddnames(_xprs, type, cnames, indice, indice);
+  zero_status_check(status, "add names", LOGLOCATION);
+}
+
+void SolverXpress::add_names(int type, const std::vector<std::string> &cnames,
+                             int first, int end) {
+  std::vector<char> row_names_charp;
+  for (auto name : cnames) {
+    name += '\0';
+    row_names_charp.insert(row_names_charp.end(), name.begin(), name.end());
+  }
+  int status = XPRSaddnames(_xprs, type, row_names_charp.data(), first, end);
   zero_status_check(status, "add names", LOGLOCATION);
 }
 
@@ -512,7 +546,7 @@ void SolverXpress::set_output_log_level(int loglevel) {
   int status = XPRSsetcbmessage(_xprs, optimizermsg, &get_stream());
   zero_status_check(status, "set message stream to solver stream", LOGLOCATION);
 
-  if (loglevel > 0) {
+  if (loglevel > 1) {
     int status =
         XPRSsetintcontrol(_xprs, XPRS_OUTPUTLOG, XPRS_OUTPUTLOG_FULL_OUTPUT);
     zero_status_check(status, "set log level", LOGLOCATION);

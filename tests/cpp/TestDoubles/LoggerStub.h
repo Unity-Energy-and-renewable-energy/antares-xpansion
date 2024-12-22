@@ -11,6 +11,12 @@ class LoggerNOOPStub : public ILogger {
   void display_message(const std::string& str) override {}
   void display_message(const std::string& str,
                        LogUtils::LOGLEVEL level) override {}
+  void PrintIterationSeparatorBegin() override {
+    //
+  }
+  void PrintIterationSeparatorEnd() override {
+    //
+  }
   void log_at_initialization(const int it_number) override {}
   void log_iteration_candidates(const LogData& d) override {}
   void log_master_solving_duration(double durationInSeconds) override {}
@@ -30,5 +36,5 @@ class LoggerNOOPStub : public ILogger {
       const LogData& best_iterations_data) override {}
   void LogAtInitialRelaxation() override {}
   void LogAtSwitchToInteger() override {}
-  void cumulative_number_of_sub_problem_resolved(int number) override {}
+  void cumulative_number_of_sub_problem_solved(int number) override {}
 };

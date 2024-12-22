@@ -4,14 +4,16 @@
 
 #pragma once
 
+#include <antares/solver/lps/LpsFromAntares.h>
+
+#include <span>
+
 #include "../model/Problem.h"
-#include "LpsFromAntares.h"
 
 class AntaresProblemToXpansionProblemTranslator {
  public:
   [[nodiscard]] static std::shared_ptr<Problem> translateToXpansionProblem(
-      const LpsFromAntares& lps, unsigned int year, unsigned int week,
-      const std::string& solver_name,
-      const std::filesystem::path& log_file_path);
-  static std::vector<char> convertSignToLEG(char* data);
+      const Antares::Solver::LpsFromAntares& lps, unsigned int year, unsigned int week,
+      const std::string& solver_name, SolverLogManager& solver_log_manager);
+  static std::vector<char> convertSignToLEG(std::span<char> data);
 };

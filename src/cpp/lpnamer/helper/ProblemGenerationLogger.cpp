@@ -7,16 +7,23 @@ ProblemGenerationFileLogger::ProblemGenerationFileLogger(
     const std::filesystem::path& logFilePath)
     : logFilePath_(logFilePath) {
   SetType(LogUtils::LOGGERTYPE::FILE);
-  logFile_.open(logFilePath_, std::ofstream::out | std::ofstream::app);
+  auto logPath = std::filesystem::absolute(logFilePath_);
+  logFile_.open(logPath, std::ofstream::out | std::ofstream::app);
   if (logFile_.fail()) {
     std::cerr << "ProblemGenerationFileLogger: Invalid file ("
-              << logFilePath_.string() << ") passed as parameter" << std::endl;
+              << logPath.string() << ") passed as parameter" << std::endl;
   }
 }
-void ProblemGenerationFileLogger::DisplayMessage(const std::string& message) {
+void ProblemGenerationFileLogger::display_message(const std::string& message) {
   logFile_ << message << std::endl;
   logFile_.flush();
 }
+
+std::ostream& ProblemGenerationFileLogger::GetOstreamObject() {
+  return logFile_;
+}
+void ProblemGenerationFileLogger::PrintIterationSeparatorBegin() {}
+void ProblemGenerationFileLogger::PrintIterationSeparatorEnd() {}
 
 ProblemGenerationOstreamLogger::ProblemGenerationOstreamLogger(
     std::ostream& stream)
@@ -28,27 +35,37 @@ ProblemGenerationOstreamLogger::ProblemGenerationOstreamLogger(
         << std::endl;
   }
 }
-void ProblemGenerationOstreamLogger::DisplayMessage(
+void ProblemGenerationOstreamLogger::display_message(
     const std::string& message) {
   stream_ << message << std::endl;
 }
+
+void ProblemGenerationOstreamLogger::PrintIterationSeparatorBegin() {}
+void ProblemGenerationOstreamLogger::PrintIterationSeparatorEnd() {}
+std::ostream& ProblemGenerationOstreamLogger::GetOstreamObject() {
+  return stream_;
+}
+
 void ProblemGenerationLogger::AddLogger(
     const ProblemGenerationILoggerSharedPointer& logger) {
   loggers_.push_back(logger);
   try_to_add_logger_to_enabled_list(logger);
 }
-void ProblemGenerationLogger::DisplayMessage(const std::string& message) const {
+void ProblemGenerationLogger::display_message(const std::string& message) {
   for (const auto& logger : enabled_loggers_) {
-    logger->DisplayMessage(message);
+    logger->display_message(message);
   }
 }
-void ProblemGenerationLogger::DisplayMessage(
-    const std::string& message, const LogUtils::LOGLEVEL log_level) const {
+void ProblemGenerationLogger::display_message(
+    const std::string& message, const LogUtils::LOGLEVEL log_level) {
   for (const auto& logger : enabled_loggers_) {
-    logger->DisplayMessage(LogUtils::LogLevelToStr(log_level));
-    logger->DisplayMessage(message);
+    logger->display_message(LogUtils::LogLevelToStr(log_level));
+    logger->display_message(message);
   }
 }
+
+void ProblemGenerationLogger::PrintIterationSeparatorBegin() {}
+void ProblemGenerationLogger::PrintIterationSeparatorEnd() {}
 void ProblemGenerationLogger::setLogLevel(const LogUtils::LOGLEVEL log_level) {
   log_level_ = log_level;
   update_enabled_logger();

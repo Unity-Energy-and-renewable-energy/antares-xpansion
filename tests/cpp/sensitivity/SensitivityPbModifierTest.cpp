@@ -55,8 +55,9 @@ protected:
         std::string solver_name = "CBC";
         SolverFactory factory;
 
-        SolverAbstract::Ptr solver_model = factory.create_solver(solver_name, std::tmpnam(nullptr));
-        solver_model->init();
+        auto solver_log_manager = SolverLogManager(std::tmpnam(nullptr));
+        SolverAbstract::Ptr solver_model =
+            factory.create_solver(solver_name, solver_log_manager);
         solver_model->read_prob_mps(last_master_mps_path);
 
         lastMasterData = init_solver_data_from_solver_model(solver_model);

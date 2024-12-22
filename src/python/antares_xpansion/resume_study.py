@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import shutil
-from antares_xpansion.benders_driver import BendersDriver
+from antares_xpansion.benders_driver import BendersDriver, SolversExe
 from antares_xpansion.launcher_options_default_value import LauncherOptionsDefaultValues
 from antares_xpansion.launcher_options_keys import LauncherOptionsKeys
 from antares_xpansion.optimisation_keys import OptimisationKeys
@@ -16,7 +16,6 @@ class ResumeStudyData:
     launcher_options_file: Path
     benders_options_file: str
     benders_exe: str
-    benders_by_batch_exe: str
     merge_mps_exe: str
 
 
@@ -29,7 +28,6 @@ class ResumeStudy:
             resume_study_data.launcher_options_file
         self._load_resume_options()
         self.benders_exe = resume_study_data.benders_exe
-        self.benders_by_batch_exe = resume_study_data.benders_by_batch_exe
         self.merge_mps_exe = resume_study_data.merge_mps_exe
         self.benders_options_file = resume_study_data.benders_options_file
 
@@ -76,7 +74,7 @@ class ResumeStudy:
         master_keyword = OptimisationKeys.master_name_key()
         if not options_file_path.exists():
             raise ResumeStudy.OptionsFileNotFound(
-                f"last master file: {options_file_path} not found")
+                f"Options file: {options_file_path} not found")
 
         options_file_path = self._simulation_output_path / self.benders_options_file
         with open(options_file_path, "r") as json_file:
@@ -110,9 +108,7 @@ class ResumeStudy:
             json.dump(options, options_json, indent=4)
 
         benders_driver = BendersDriver(
-            self.benders_exe,
-            self.benders_by_batch_exe,
-            self.merge_mps_exe,
+            SolversExe(self.benders_exe, self.merge_mps_exe, ""),
             self.benders_options_file
         )
         benders_driver.launch(self._simulation_output_path.parent, self.method,

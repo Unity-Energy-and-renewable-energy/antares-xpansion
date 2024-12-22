@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <list>
 #include <memory>
@@ -11,6 +12,53 @@
 #include <vector>
 
 #include "LogUtils.h"
+
+class SolverLogManager {
+ public:
+  explicit SolverLogManager() = default;
+  explicit SolverLogManager(const SolverLogManager &other)
+      : SolverLogManager(other.log_file_path) {}
+
+  explicit SolverLogManager(const std::filesystem::path &log_file)
+      : log_file_path(log_file) {
+    init();
+  }
+
+  SolverLogManager &operator=(const SolverLogManager &other) {
+    if (this == &other) {
+      return *this;
+    }
+    log_file_path = other.log_file_path;
+    init();
+    return *this;
+  }
+
+  void init() {
+#ifdef __linux__
+    if (log_file_path.empty() ||
+        (log_file_ptr = fopen(log_file_path.string().c_str(), "a+")) == nullptr)
+#elif _WIN32
+    if (log_file_path.empty() ||
+        (log_file_ptr = _fsopen(log_file_path.string().c_str(), "a+",
+                                _SH_DENYNO)) == nullptr)
+#endif
+    {
+      std::cout << "Invalid log file name passed as parameter: "
+                << std::quoted(log_file_path.string()) << std::endl;
+    } else {
+      setvbuf(log_file_ptr, nullptr, _IONBF, 0);
+    }
+  }
+  ~SolverLogManager() {
+    if (log_file_ptr) {
+      fclose(log_file_ptr);
+      log_file_ptr = nullptr;
+    }
+  }
+
+  FILE *log_file_ptr = nullptr;
+  std::filesystem::path log_file_path = "";
+};
 
 class InvalidStatusException
     : public LogUtils::XpansionError<std::runtime_error> {
@@ -306,6 +354,17 @@ class SolverAbstract {
   virtual void get_obj(double *obj, int first, int last) const = 0;
 
   /**
+   * @brief Set the objective function coefficients to zero
+   */
+  virtual void set_obj_to_zero() = 0;
+
+  /**
+   * @brief Set the objective function coefficients for the columns in a
+   * given range
+   */
+  virtual void set_obj(const double *obj, int first, int last) = 0;
+
+  /**
   * @brief get coefficients of rows from index first to last
   *
   * @param mstart     : Integer array which will be filled with the indices
@@ -466,7 +525,8 @@ class SolverAbstract {
   virtual void add_rows(int newrows, int newnz, const char *qrtype,
                         const double *rhs, const double *range,
                         const int *mstart, const int *mclind,
-                        const double *dmatval) = 0;
+                        const double *dmatval,
+                        const std::vector<std::string> &names = {}) = 0;
 
   /**
   * @brief Adds new columns to the problem
@@ -500,6 +560,8 @@ class SolverAbstract {
    * @param indice : index of the row or of the column.
    */
   virtual void add_name(int type, const char *cnames, int indice) = 0;
+  virtual void add_names(int type, const std::vector<std::string> &cnames,
+                         int first, int end) = 0;
 
   /**
    * @brief Change coefficients in objective function

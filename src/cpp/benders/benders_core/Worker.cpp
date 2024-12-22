@@ -1,7 +1,7 @@
 #include "Worker.h"
 
 #include "LogUtils.h"
-#include "glog/logging.h"
+
 #include "solver_utils.h"
 /*!
  *  \brief Free the problem
@@ -37,18 +37,18 @@ void Worker::get_value(double &lb) const {
 void Worker::init(VariableMap const &variable_map,
                   const std::filesystem::path &path_to_mps,
                   std::string const &solver_name, int log_level,
-                  const std::filesystem::path &log_name) {
+                  SolverLogManager&solver_log_manager) {
   _path_to_mps = path_to_mps;
-  SolverFactory factory;
+  SolverFactory factory(logger_);
+
   if (_is_master) {
-    _solver =
-        factory.create_solver(solver_name, SOLVER_TYPE::INTEGER, log_name);
+    _solver = factory.create_solver(solver_name, SOLVER_TYPE::INTEGER,
+                                    solver_log_manager);
   } else {
-    _solver =
-        factory.create_solver(solver_name, SOLVER_TYPE::CONTINUOUS, log_name);
+    _solver = factory.create_solver(solver_name, SOLVER_TYPE::CONTINUOUS,
+                                    solver_log_manager);
   }
 
-  _solver->init();
   _solver->set_threads(1);
   _solver->set_output_log_level(log_level);
   _solver->read_prob_mps(path_to_mps);
@@ -116,3 +116,29 @@ void Worker::get_splex_num_of_ite_last(int &result) const {
 void Worker::write_basis(const std::filesystem::path &filename) const {
   _solver->write_basis(filename);
 }
+
+int Worker::RowIndex(const std::string &row_name) const {
+  return _solver->get_row_index(row_name);
+}
+
+void Worker::ChangeRhs(int id_row, double val) const {
+  _solver->chg_rhs(id_row, val);
+}
+
+void Worker::GetRhs(double *val, int id_row) const {
+  _solver->get_rhs(val, id_row, id_row);
+}
+
+void Worker::AddRows(std::vector<char> const &qrtype_p,
+                     std::vector<double> const &rhs_p,
+                     std::vector<double> const &range_p,
+                     std::vector<int> const &mstart_p,
+                     std::vector<int> const &mclind_p,
+                     std::vector<double> const &dmatval_p,
+                     const std::vector<std::string> &row_names) const {
+  solver_addrows(*_solver, qrtype_p, rhs_p, {}, mstart_p, mclind_p, dmatval_p,
+                 row_names);
+}
+
+int Worker::Getnrows() const { return _solver->get_nrows(); }
+int Worker::Getncols() const { return _solver->get_ncols(); }

@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "Timer.h"
-#include "glog/logging.h"
+
 #include "solver_utils.h"
 
 /*!
@@ -17,17 +17,20 @@
  *  \param options : set of options fixed by the user
  */
 
-BendersSequential::BendersSequential(BendersBaseOptions const &options,
-                                     Logger logger, Writer writer)
-    : BendersBase(options, std::move(logger), std::move(writer)) {}
+BendersSequential::BendersSequential(
+    BendersBaseOptions const &options, Logger logger, Writer writer,
+    std::shared_ptr<MathLoggerDriver> mathLoggerDriver)
+    : BendersBase(options, std::move(logger), std::move(writer),
+                  mathLoggerDriver) {}
 
 void BendersSequential::InitializeProblems() {
   MatchProblemToId();
 
-  reset_master(new WorkerMaster(
-      master_variable_map, get_master_path(), get_solver_name(),
-      get_log_level(), _data.nsubproblem, log_name(), IsResumeMode(), _logger));
-  for (const auto &problem : coupling_map) {
+  reset_master<WorkerMaster>(master_variable_map_, get_master_path(),
+                                get_solver_name(), get_log_level(),
+                                _data.nsubproblem, solver_log_manager_,
+                                IsResumeMode(), _logger);
+  for (const auto &problem : coupling_map_) {
     const auto subProblemFilePath = GetSubproblemPath(problem.first);
 
     AddSubproblem(problem);
@@ -114,7 +117,9 @@ void BendersSequential::Run() {
     UpdateTrace();
 
     set_timer_master(timer_master.elapsed());
-    _data.elapsed_time = GetBendersTime();
+    _data.iteration_time = -_data.benders_time;
+    _data.benders_time = GetBendersTime();
+    _data.iteration_time += _data.benders_time;
     _data.stop = ShouldBendersStop();
     SaveCurrentBendersData();
   }
@@ -124,20 +129,16 @@ void BendersSequential::Run() {
 }
 
 void BendersSequential::launch() {
-  build_input_map();
-
-  LOG(INFO) << "Building input" << std::endl;
-
-  LOG(INFO) << "Constructing workers..." << std::endl;
+  _logger->display_message("Building input");
+  _logger->display_message("Constructing workers...");
 
   InitializeProblems();
-  LOG(INFO) << "Running solver..." << std::endl;
+  _logger->display_message("Running solver...");
   try {
     Run();
-    LOG(INFO) << BendersName() + " solver terminated." << std::endl;
+    _logger->display_message(BendersName() + " solver terminated.");
   } catch (std::exception const &ex) {
     std::string error = "Exception raised : " + std::string(ex.what());
-    LOG(WARNING) << error << std::endl;
     _logger->display_message(error);
   }
 

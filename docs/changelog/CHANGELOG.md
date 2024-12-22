@@ -1,6 +1,45 @@
 Antares-Xpansion changelog
 =================
-v1.1 (TBA)
+
+v1.3.0 (06/2024)
+--------------------------------------------------------
+
+### Features
+
+Embedding Mpi in Windows
+Allow sensitivity study to run unzipped study
+First Implementation of Benders Outer Loop
+### Bug Fixes
+
+Duplicate Xpress loading messages
+remove whitespace from Xpress path on Windows 
+fix truncated xpress path on linux
+
+v1.2.2 (02/2024)
+--------------------------------------------------------
+
+- Update Antares simulator to 8.8.3
+
+v1.2 (10/2023)
+--------------------------------------------------------
+
+### Features
+
+- Support "named mps" from Antares simulator
+- Use Antares Simulator 8.8.0-rc2
+
+### Bug fixes
+
+- Fix issue on windows with concurrent access to log files
+
+v1.1.1 (09/2023)
+--------------------
+
+### Fix
+
+- Update performance graph in the documentation
+
+v1.1.0 (09/2023)
 --------------------
 
 ### Features

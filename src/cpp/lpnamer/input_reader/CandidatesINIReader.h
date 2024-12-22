@@ -41,11 +41,17 @@ class CandidatesINIReader {
   std::vector<CandidateData> readCandidateData(
       const std::filesystem::path& candidateFile) const;
 
+  class InvalidIntercoFile
+      : public LogUtils::XpansionError<std::runtime_error> {
+    using LogUtils::XpansionError<std::runtime_error>::XpansionError;
+  };
+
  private:
   bool checkArea(std::string const& areaName_p) const;
   CandidateData readCandidateSection(const std::filesystem::path& candidateFile,
                                      const INIReader& reader,
-                                     const std::string& sectionName) const;
+                                     const std::string& sectionName,
+                                     std::ostringstream& err_msg) const;
 
   std::map<std::string, int> _intercoIndexMap;
   std::vector<IntercoFileData> _intercoFileData;

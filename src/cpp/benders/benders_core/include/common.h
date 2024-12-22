@@ -24,6 +24,7 @@
 #include <vector>
 
 enum class MasterFormulation { INTEGER, RELAXED };
+enum class SOLVER { BENDERS, OUTER_LOOP, MERGE_MPS };
 
 struct Predicate;
 typedef std::map<std::string, double> Point;
@@ -48,6 +49,13 @@ typedef std::vector<ActiveCut> ActiveCutStorage;
 
 typedef std::pair<std::string, std::string> mps_coupling;
 typedef std::list<mps_coupling> mps_coupling_list;
+
+enum class BENDERSMETHOD {
+  BENDERS,
+  BENDERS_BY_BATCH,
+  BENDERS_EXTERNAL_LOOP,
+  BENDERS_BY_BATCH_EXTERNAL_LOOP
+};
 
 struct Predicate {
   bool operator()(PointPtr const &lhs, PointPtr const &rhs) const {
@@ -134,6 +142,13 @@ struct BaseOptions {
   Str2Dbl weights;
 };
 typedef BaseOptions MergeMPSOptions;
+
+struct ExternalLoopOptions {
+  bool DO_OUTER_LOOP = false;
+  std::string OUTER_LOOP_OPTION_FILE;
+  unsigned int OUTER_LOOP_NUMBER_OF_SCENARIOS = 1;
+};
+
 struct BendersBaseOptions : public BaseOptions {
   explicit BendersBaseOptions(const BaseOptions &base_to_copy)
       : BaseOptions(base_to_copy) {}
@@ -157,6 +172,7 @@ struct BendersBaseOptions : public BaseOptions {
   std::string LAST_MASTER_BASIS;
 
   size_t BATCH_SIZE;
+  ExternalLoopOptions EXTERNAL_LOOP_OPTIONS;
 };
 
 void usage(int argc);

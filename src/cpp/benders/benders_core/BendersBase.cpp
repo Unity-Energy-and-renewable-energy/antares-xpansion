@@ -9,32 +9,53 @@
 #include "LastIterationReader.h"
 #include "LastIterationWriter.h"
 #include "LogUtils.h"
-#include "glog/logging.h"
+#include "VariablesGroup.h"
+
 #include "solver_utils.h"
 
-BendersBase::BendersBase(BendersBaseOptions options, Logger logger,
-                         Writer writer)
-    : _options(std::move(options)),
+BendersBase::BendersBase(const BendersBaseOptions &options, Logger logger,
+                         Writer writer,
+                         std::shared_ptr<MathLoggerDriver> mathLoggerDriver)
+    : _options(options),
       _csv_file_path(std::filesystem::path(_options.OUTPUTROOT) /
                      (_options.CSV_NAME + ".csv")),
       _logger(std::move(logger)),
-      _writer(std::move(writer)) {}
+      _writer(std::move(writer)),
+      mathLoggerDriver_(std::move(mathLoggerDriver)) {
+  if (options.EXTERNAL_LOOP_OPTIONS.DO_OUTER_LOOP) {
+    //TODO maybe the input format will change?
+    outer_loop_input_data_ =
+        Outerloop::OuterLoopInputFromYaml().Read(OuterloopOptionsFile());
+    outer_loop_biLevel_ = OuterLoopBiLevel(outer_loop_input_data_);
+  }
+}
+
+std::filesystem::path BendersBase::OuterloopOptionsFile() const {
+  return std::filesystem::path(
+         _options.EXTERNAL_LOOP_OPTIONS.OUTER_LOOP_OPTION_FILE);
+}
 
 /*!
  *  \brief Initialize set of data used in the loop
  */
 void BendersBase::init_data() {
-  _data.lb = -1e20;
-  _data.ub = +1e20;
-  _data.best_ub = +1e20;
+  _data.lb = relevantIterationData_.last._lb = -1e20;
+  _data.ub = relevantIterationData_.last._ub = +1e20;
+  _data.best_ub = relevantIterationData_.last._best_ub = +1e20;
   _data.stop = false;
   _data.it = 0;
   _data.overall_subpb_cost_under_approx = 0;
-  _data.invest_cost = 0;
+  _data.invest_cost = relevantIterationData_.last._invest_cost = 0;
   _data.best_it = 0;
   _data.stopping_criterion = StoppingCriterion::empty;
   _data.is_in_initial_relaxation = false;
-  _data.number_of_subproblem_resolved = 0;
+  _data.cumulative_number_of_subproblem_solved = 0;
+  relevantIterationData_.best = relevantIterationData_.last;
+  _data.benders_time = 0;
+  _data.iteration_time = 0;
+  _data.timer_master = 0;
+  _data.subproblems_walltime = 0;
+  outer_loop_criterion_.clear();
 }
 
 void BendersBase::OpenCsvFile() {
@@ -47,8 +68,8 @@ void BendersBase::OpenCsvFile() {
                    "time;basis;"
                 << std::endl;
     } else {
-      LOG(INFO) << "Impossible to open the .csv file: " << _csv_file_path
-                << std::endl;
+      using namespace std::string_literals;
+      _logger->display_message("Impossible to open the .csv file: "s + _csv_file_path.string());
     }
   }
 }
@@ -59,17 +80,17 @@ void BendersBase::CloseCsvFile() {
   }
 }
 void BendersBase::PrintCurrentIterationCsv() {
-  if (relevantIterationData_.last->_valid) {
+  if (relevantIterationData_.last._valid) {
     auto ite = _data.it - 1;
     Point x_cut;
     // Write first problem : use result of best iteration
     if (ite == 0) {
       int best_it_index = _data.best_it - 1;
-      if (best_it_index >= 0 && relevantIterationData_.best != nullptr) {
-        x_cut = relevantIterationData_.best->get_x_cut();
+      if (best_it_index >= 0) {
+        x_cut = relevantIterationData_.best.get_x_cut();
       }
     } else {
-      x_cut = relevantIterationData_.last->get_x_cut();
+      x_cut = relevantIterationData_.last.get_x_cut();
     }
     print_master_and_cut(_csv_file, ite + 1 + iterations_before_resume,
                          relevantIterationData_.last, x_cut);
@@ -87,7 +108,8 @@ void BendersBase::PrintCurrentIterationCsv() {
  *
  *  \param subproblem_index : problem id
  */
-void print_cut_csv(std::ostream &stream, const SubProblemData &subproblem_data,
+void print_cut_csv(std::ostream &stream,
+                   const PlainData::SubProblemData &subproblem_data,
                    std::string const &subproblem_name, int subproblem_index,
                    double alpha_i) {
   stream << "Subproblem"
@@ -106,13 +128,13 @@ void print_cut_csv(std::ostream &stream, const SubProblemData &subproblem_data,
 }
 
 void BendersBase::print_master_and_cut(std::ostream &file, int ite,
-                                       WorkerMasterDataPtr &trace,
+                                       WorkerMasterData &trace,
                                        Point const &x_cut) {
   file << ite << ";";
 
   print_master_csv(file, trace, x_cut);
 
-  for (auto &[subproblem_name, subproblem_data] : trace->_cut_trace) {
+  for (auto &[subproblem_name, subproblem_data] : trace._cut_trace) {
     auto problem_id = _problem_to_id[subproblem_name];
     file << ite << ";";
     print_cut_csv(file, subproblem_data, subproblem_name, problem_id,
@@ -130,19 +152,19 @@ void BendersBase::print_master_and_cut(std::ostream &file, int ite,
  *  \param x_cut : cut point determined after the master resolution
  */
 void BendersBase::print_master_csv(std::ostream &stream,
-                                   const WorkerMasterDataPtr &trace,
+                                   const WorkerMasterData &trace,
                                    Point const &x_cut) const {
   stream << "Master"
          << ";";
   stream << _options.MASTER_NAME << ";";
   stream << _data.nsubproblem << ";";
-  stream << trace->_ub << ";";
-  stream << trace->_lb << ";";
-  stream << trace->_best_ub << ";";
+  stream << trace._ub << ";";
+  stream << trace._lb << ";";
+  stream << trace._best_ub << ";";
   stream << ";";
-  stream << norm_point(x_cut, trace->get_x_cut()) << ";";
+  stream << norm_point(x_cut, trace.get_x_cut()) << ";";
   stream << ";";
-  stream << trace->_master_duration << ";";
+  stream << trace._master_duration << ";";
   stream << std::endl;
 }
 
@@ -157,7 +179,12 @@ void BendersBase::update_best_ub() {
     _data.x_in = _data.x_cut;
     _data.best_ub = _data.ub;
     _data.best_it = _data.it;
-    relevantIterationData_.best = relevantIterationData_.last;
+    FillWorkerMasterData(relevantIterationData_.best);
+    _data.outer_loop_current_iteration_data.max_criterion_best_it =
+        _data.outer_loop_current_iteration_data.max_criterion;
+    _data.outer_loop_current_iteration_data.max_criterion_area_best_it =
+        _data.outer_loop_current_iteration_data.max_criterion_area;
+    relevantIterationData_.best._cut_trace = relevantIterationData_.last._cut_trace;
     best_iteration_data = bendersDataToLogData(_data);
   }
 }
@@ -177,7 +204,7 @@ bool BendersBase::ShouldRelaxationStop() const {
  *
  */
 void BendersBase::UpdateStoppingCriterion() {
-  if (_data.elapsed_time > _options.TIME_LIMIT)
+  if (_data.benders_time > _options.TIME_LIMIT)
     _data.stopping_criterion = StoppingCriterion::timelimit;
   else if ((_options.MAX_ITERATIONS != -1) &&
            (_data.it >= _options.MAX_ITERATIONS))
@@ -195,6 +222,21 @@ bool BendersBase::ShouldBendersStop() {
   return (_data.stopping_criterion != StoppingCriterion::empty) &&
          !_data.is_in_initial_relaxation;
 }
+void BendersBase::FillWorkerMasterData(WorkerMasterData &worker_master_data) {
+  worker_master_data._lb = _data.lb;
+  worker_master_data._ub = _data.ub;
+  worker_master_data._best_ub = _data.best_ub;
+  worker_master_data._x_in = std::make_shared<Point>(_data.x_in);
+  worker_master_data._x_out = std::make_shared<Point>(_data.x_out);
+  worker_master_data._x_cut = std::make_shared<Point>(_data.x_cut);
+  worker_master_data._max_invest = std::make_shared<Point>(_data.max_invest);
+  worker_master_data._min_invest = std::make_shared<Point>(_data.min_invest);
+  worker_master_data._master_duration = _data.timer_master;
+  worker_master_data._subproblem_duration = _data.subproblems_walltime;
+  worker_master_data._invest_cost = _data.invest_cost;
+  worker_master_data._operational_cost = _data.subproblem_cost;
+  worker_master_data._valid = true;
+}
 
 /*!
  *  \brief Update trace of the Benders for the current iteration
@@ -202,22 +244,9 @@ bool BendersBase::ShouldBendersStop() {
  *  Fonction to store the current Benders data in the trace
  */
 void BendersBase::UpdateTrace() {
-  auto &LastWorkerMasterDataPtr = relevantIterationData_.last;
-  LastWorkerMasterDataPtr->_lb = _data.lb;
-  LastWorkerMasterDataPtr->_ub = _data.ub;
-  LastWorkerMasterDataPtr->_best_ub = _data.best_ub;
-  LastWorkerMasterDataPtr->_x_in = std::make_shared<Point>(_data.x_in);
-  LastWorkerMasterDataPtr->_x_out = std::make_shared<Point>(_data.x_out);
-  LastWorkerMasterDataPtr->_x_cut = std::make_shared<Point>(_data.x_cut);
-  LastWorkerMasterDataPtr->_max_invest =
-      std::make_shared<Point>(_data.max_invest);
-  LastWorkerMasterDataPtr->_min_invest =
-      std::make_shared<Point>(_data.min_invest);
-  LastWorkerMasterDataPtr->_master_duration = _data.timer_master;
-  LastWorkerMasterDataPtr->_subproblem_duration = _data.subproblems_walltime;
-  LastWorkerMasterDataPtr->_invest_cost = _data.invest_cost;
-  LastWorkerMasterDataPtr->_operational_cost = _data.subproblem_cost;
-  LastWorkerMasterDataPtr->_valid = true;
+  FillWorkerMasterData(relevantIterationData_.last);
+  // TODO Outer loop --> de-comment for general case
+  // workerMasterDataVect_.push_back(relevantIterationData_.last);
 }
 
 bool BendersBase::is_initial_relaxation_requested() const {
@@ -325,8 +354,7 @@ void BendersBase::ComputeInvestCost() {
   _data.invest_cost = 0;
 
   int ncols = _master->_solver->get_ncols();
-  std::vector<double> obj(ncols);
-  _master->_solver->get_obj(obj.data(), 0, ncols - 1);
+  std::vector<double> obj(MasterObjectiveFunctionCoeffs());
 
   for (const auto &[col_name, value] : _data.x_cut) {
     int col_id = _master->_name_to_id[col_name];
@@ -364,11 +392,17 @@ void BendersBase::GetSubproblemCut(SubProblemDataMap &subproblem_data_map) {
                 const std::pair<std::string, SubproblemWorkerPtr> &kvp) {
               const auto &[name, worker] = kvp;
               Timer subproblem_timer;
-              SubProblemData subproblem_data;
+              PlainData::SubProblemData subproblem_data;
               worker->fix_to(_data.x_cut);
               worker->solve(subproblem_data.lpstatus, _options.OUTPUTROOT,
                             _options.LAST_MASTER_MPS + MPS_SUFFIX, _writer);
               worker->get_value(subproblem_data.subproblem_cost);
+              if (_options.EXTERNAL_LOOP_OPTIONS.DO_OUTER_LOOP) {
+                std::vector<double> solution;
+                worker->get_solution(solution);
+                subproblem_data.outer_loop_criterions =
+                    ComputeOuterLoopCriterion(name, solution);
+              }
               worker->get_subgradient(subproblem_data.var_name_and_subgradient);
               worker->get_splex_num_of_ite_last(subproblem_data.simplex_iter);
               subproblem_data.subproblem_timer = subproblem_timer.elapsed();
@@ -390,13 +424,14 @@ void BendersBase::GetSubproblemCut(SubProblemDataMap &subproblem_data_map) {
  *
  */
 void BendersBase::compute_cut(const SubProblemDataMap &subproblem_data_map) {
+  // current_outer_loop_criterion_ = 0.0;
   for (auto const &[subproblem_name, subproblem_data] : subproblem_data_map) {
     _data.ub += subproblem_data.subproblem_cost;
 
     _master->addSubproblemCut(_problem_to_id[subproblem_name],
                               subproblem_data.var_name_and_subgradient,
                               _data.x_cut, subproblem_data.subproblem_cost);
-    relevantIterationData_.last->_cut_trace[subproblem_name] = subproblem_data;
+    relevantIterationData_.last._cut_trace[subproblem_name] = subproblem_data;
   }
 }
 
@@ -430,7 +465,7 @@ void BendersBase::compute_cut_aggregate(
 
     compute_cut_val(subproblem_data.var_name_and_subgradient, _data.x_cut, s);
 
-    relevantIterationData_.last->_cut_trace[name] = subproblem_data;
+    relevantIterationData_.last._cut_trace[name] = subproblem_data;
   }
   _master->add_cut(s, _data.x_cut, rhs);
 }
@@ -467,7 +502,7 @@ LogData BendersBase::FinalLogData() const {
   result.subproblem_cost = best_iteration_data.subproblem_cost;
   result.invest_cost = best_iteration_data.invest_cost;
   result.cumulative_number_of_subproblem_resolved =
-      _data.number_of_subproblem_resolved +
+      _data.cumulative_number_of_subproblem_solved +
       cumulative_number_of_subproblem_resolved_before_resume;
 
   return result;
@@ -481,27 +516,43 @@ void BendersBase::post_run_actions() const {
 }
 
 void BendersBase::SaveCurrentIterationInOutputFile() const {
-  auto &LastWorkerMasterDataPtr = relevantIterationData_.last;
-  if (LastWorkerMasterDataPtr->_valid) {
-    _writer->write_iteration(iteration(LastWorkerMasterDataPtr),
-                             _data.it + iterations_before_resume);
+  if (!_options.EXTERNAL_LOOP_OPTIONS.DO_OUTER_LOOP) {
+    auto &LastWorkerMasterData = relevantIterationData_.last;
+    if (LastWorkerMasterData._valid) {
+      _writer->write_iteration(iteration(LastWorkerMasterData),
+                               _data.it + iterations_before_resume);
+      _writer->dump();
+    }
+  }
+}
+
+void BendersBase::SaveCurrentOuterLoopIterationInOutputFile() const {
+  auto &LastWorkerMasterData = relevantIterationData_.last;
+  if (LastWorkerMasterData._valid) {
+    _writer->write_iteration(
+        iteration(LastWorkerMasterData),
+        _data.outer_loop_current_iteration_data.benders_num_run);
     _writer->dump();
   }
 }
+
 void BendersBase::SaveSolutionInOutputFile() const {
   _writer->write_solution(solution());
   _writer->dump();
 }
+void BendersBase::SaveOuterLoopSolutionInOutputFile() const {
+  _writer->write_solution(GetOuterLoopSolution());
+  _writer->dump();
+}
 
-Output::CandidatesVec candidates_data(
-    const WorkerMasterDataPtr &masterDataPtr_l) {
+Output::CandidatesVec candidates_data(const WorkerMasterData &masterDataPtr_l) {
   Output::CandidatesVec candidates_vec;
-  for (const auto &[cand_name, cand_value] : masterDataPtr_l->get_x_cut()) {
+  for (const auto &[cand_name, cand_value] : masterDataPtr_l.get_x_cut()) {
     Output::CandidateData candidate_data;
     candidate_data.name = cand_name;
     candidate_data.invest = cand_value;
-    candidate_data.min = masterDataPtr_l->get_min_invest()[cand_name];
-    candidate_data.max = masterDataPtr_l->get_max_invest()[cand_name];
+    candidate_data.min = masterDataPtr_l.get_min_invest()[cand_name];
+    candidate_data.max = masterDataPtr_l.get_max_invest()[cand_name];
     candidates_vec.push_back(candidate_data);
   }
 
@@ -509,31 +560,46 @@ Output::CandidatesVec candidates_data(
 }
 
 Output::Iteration BendersBase::iteration(
-    const WorkerMasterDataPtr &masterDataPtr_l) const {
+    const WorkerMasterData &masterDataPtr_l) const {
   Output::Iteration iteration;
-  iteration.master_duration = masterDataPtr_l->_master_duration;
-  iteration.subproblem_duration = masterDataPtr_l->_subproblem_duration;
-  iteration.lb = masterDataPtr_l->_lb;
-  iteration.ub = masterDataPtr_l->_ub;
-  iteration.best_ub = masterDataPtr_l->_best_ub;
-  iteration.optimality_gap = masterDataPtr_l->_best_ub - masterDataPtr_l->_lb;
-  iteration.relative_gap = (masterDataPtr_l->_best_ub - masterDataPtr_l->_lb) /
-                           masterDataPtr_l->_best_ub;
-  iteration.investment_cost = masterDataPtr_l->_invest_cost;
-  iteration.operational_cost = masterDataPtr_l->_operational_cost;
+  iteration.master_duration = masterDataPtr_l._master_duration;
+  iteration.subproblem_duration = masterDataPtr_l._subproblem_duration;
+  iteration.lb = masterDataPtr_l._lb;
+  iteration.ub = masterDataPtr_l._ub;
+  iteration.best_ub = masterDataPtr_l._best_ub;
+  iteration.optimality_gap = masterDataPtr_l._best_ub - masterDataPtr_l._lb;
+  iteration.relative_gap = (masterDataPtr_l._best_ub - masterDataPtr_l._lb) /
+                           masterDataPtr_l._best_ub;
+  iteration.investment_cost = masterDataPtr_l._invest_cost;
+  iteration.operational_cost = masterDataPtr_l._operational_cost;
   iteration.overall_cost =
-      masterDataPtr_l->_invest_cost + masterDataPtr_l->_operational_cost;
+      masterDataPtr_l._invest_cost + masterDataPtr_l._operational_cost;
   iteration.candidates = candidates_data(masterDataPtr_l);
   iteration.cumulative_number_of_subproblem_resolved =
-      _data.number_of_subproblem_resolved +
+      _data.cumulative_number_of_subproblem_solved +
       cumulative_number_of_subproblem_resolved_before_resume;
   return iteration;
 }
 
 Output::SolutionData BendersBase::solution() const {
+  auto solution_data = BendersSolution();
+  solution_data.best_it = _data.best_it + iterations_before_resume;
+
+  return solution_data;
+}
+
+void BendersBase::UpdateOuterLoopSolution() {
+  outer_loop_solution_data_ = BendersSolution();
+  outer_loop_solution_data_.best_it =
+      _data.outer_loop_current_iteration_data.benders_num_run;
+}
+
+Output::SolutionData BendersBase::GetOuterLoopSolution() const {
+  return outer_loop_solution_data_;
+}
+Output::SolutionData BendersBase::BendersSolution() const {
   Output::SolutionData solution_data;
   solution_data.nbWeeks_p = _totalNbProblems;
-  solution_data.best_it = _data.best_it + iterations_before_resume;
   solution_data.problem_status = status_from_criterion();
   const auto optimal_gap(_data.best_ub - _data.lb);
   const auto relative_gap(optimal_gap / _data.best_ub);
@@ -565,11 +631,9 @@ Output::SolutionData BendersBase::solution() const {
 
   } else {
     const auto &best_iteration_worker_master_data = relevantIterationData_.best;
-    if (best_iteration_worker_master_data != nullptr) {
-      solution_data.solution = iteration(best_iteration_worker_master_data);
-      solution_data.solution.optimality_gap = optimal_gap;
-      solution_data.solution.relative_gap = relative_gap;
-    }
+    solution_data.solution = iteration(best_iteration_worker_master_data);
+    solution_data.solution.optimality_gap = optimal_gap;
+    solution_data.solution.relative_gap = relative_gap;
   }
   solution_data.stopping_criterion = criterion_to_str(_data.stopping_criterion);
   return solution_data;
@@ -622,6 +686,13 @@ std::filesystem::path BendersBase::get_master_path() const {
   return std::filesystem::path(_options.INPUTROOT) /
          (_options.MASTER_NAME + MPS_SUFFIX);
 }
+/*!
+ *  \brief Get path to last mps file of master problem
+ */
+std::filesystem::path BendersBase::LastMasterPath() const {
+  return std::filesystem::path(_options.OUTPUTROOT) /
+         (_options.LAST_MASTER_MPS + MPS_SUFFIX);
+}
 
 /*!
  *  \brief Get path to structure txt file from options
@@ -648,42 +719,33 @@ LogData BendersBase::bendersDataToLogData(
           optimal_gap,
           optimal_gap / data.best_ub,
           _options.MAX_ITERATIONS,
-          data.elapsed_time,
+          data.benders_time,
           data.timer_master,
           data.subproblems_walltime,
-          data.number_of_subproblem_resolved +
+          data.cumulative_number_of_subproblem_solved +
               cumulative_number_of_subproblem_resolved_before_resume};
 }
-void BendersBase::set_log_file(const std::filesystem::path &log_name) {
-  _log_name = log_name;
+void BendersBase::set_solver_log_file(const std::filesystem::path &log_file) {
+  solver_log_file_ = log_file;
+  solver_log_manager_ = SolverLogManager(solver_log_file_);
 }
 
 /*!
- *  \brief Build the input from the structure file
+ *  \brief set the input
  *
- *	Function to build the map linking each problem name to its variables and
- *their id
- *
- *  \param root : root of the structure file
- *
- *  \param summary_name : name of the structure file
- *
- *  \param coupling_map : empty map to increment
- *
- *  \note The id in the coupling_map is that of the variable in the solver
- *responsible for the creation of the structure file.
+ *  \param coupling_map : CouplingMap
  */
-void BendersBase::build_input_map() {
-  auto input = build_input(get_structure_path());
-  _totalNbProblems = input.size();
+void BendersBase::set_input_map(const CouplingMap &coupling_map) {
+  coupling_map_ = coupling_map;
+  _totalNbProblems = coupling_map_.size();
   _writer->write_nbweeks(_totalNbProblems);
   _data.nsubproblem = _totalNbProblems - 1;
-  master_variable_map = get_master_variable_map(input);
-  coupling_map = GetCouplingMap(input);
+  master_variable_map_ = get_master_variable_map(coupling_map_);
+  coupling_map_.erase(get_master_name());
 }
 
 std::map<std::string, int> BendersBase::get_master_variable_map(
-    std::map<std::string, std::map<std::string, int>> input_map) const {
+    const std::map<std::string, std::map<std::string, int>> &input_map) const {
   auto const it_master(input_map.find(get_master_name()));
   if (it_master == input_map.end()) {
     _logger->display_message(LOGLOCATION + "UNABLE TO FIND " +
@@ -693,21 +755,10 @@ std::map<std::string, int> BendersBase::get_master_variable_map(
   return it_master->second;
 }
 
-CouplingMap BendersBase::GetCouplingMap(CouplingMap input) const {
-  CouplingMap couplingMap;
-  auto master_name = get_master_name();
-  std::copy_if(input.begin(), input.end(),
-               std::inserter(couplingMap, couplingMap.end()),
-               [master_name](const CouplingMap::value_type &kvp) {
-                 return kvp.first != master_name;
-               });
-  return couplingMap;
+void BendersBase::free_master() {
+  _master->free();
+  master_is_empty_ = true;
 }
-
-void BendersBase::reset_master(WorkerMaster *worker_master) {
-  _master.reset(worker_master);
-}
-void BendersBase::free_master() const { _master->free(); }
 WorkerMasterPtr BendersBase::get_master() const { return _master; }
 
 void BendersBase::AddSubproblem(
@@ -715,7 +766,7 @@ void BendersBase::AddSubproblem(
   subproblem_map[kvp.first] = std::make_shared<SubproblemWorker>(
       kvp.second, GetSubproblemPath(kvp.first),
       SubproblemWeight(_data.nsubproblem, kvp.first), _options.SOLVER_NAME,
-      _options.LOG_LEVEL, log_name(), _logger);
+      _options.LOG_LEVEL, solver_log_manager_, _logger);
 }
 
 void BendersBase::free_subproblems() {
@@ -723,9 +774,23 @@ void BendersBase::free_subproblems() {
 }
 void BendersBase::MatchProblemToId() {
   int count = 0;
-  for (const auto &problem : coupling_map) {
+  for (const auto &problem : coupling_map_) {
     _problem_to_id[problem.first] = count;
     count++;
+  }
+}
+
+// Search for variables in sub problems that satify patterns
+// var_indices is a vector(for each patterns p) of vector (var indices related
+// to p)
+void BendersBase::SetSubproblemsVariablesIndex() {
+  if (!subproblem_map.empty() && _options.EXTERNAL_LOOP_OPTIONS.DO_OUTER_LOOP) {
+    auto subproblem = subproblem_map.begin();
+    subproblems_vars_names_.clear();
+    subproblems_vars_names_ = subproblem->second->_solver->get_col_names();
+    Outerloop::VariablesGroup variablesGroup(subproblems_vars_names_,
+                                             outer_loop_input_data_.OuterLoopData());
+    var_indices_ = variablesGroup.Indices();
   }
 }
 
@@ -771,6 +836,24 @@ void BendersBase::SetSubproblemCost(const double &subproblem_cost) {
   _data.subproblem_cost = subproblem_cost;
 }
 
+/*!
+*	\brief Update maximum and minimum of simplex iterations
+*
+*	\param subproblem_iterations : number of iterations done with the subproblem
+*
+*/
+void BendersBase::BoundSimplexIterations(int subproblem_iterations){
+  
+  _data.max_simplexiter = (_data.max_simplexiter < subproblem_iterations) ? subproblem_iterations : _data.max_simplexiter; 
+  _data.min_simplexiter = (_data.min_simplexiter > subproblem_iterations) ? subproblem_iterations : _data.min_simplexiter; 
+
+}
+
+void BendersBase::ResetSimplexIterationsBounds()
+{
+	_data.max_simplexiter = 0;
+	_data.min_simplexiter = std::numeric_limits<int>::max();
+}
 bool BendersBase::IsResumeMode() const { return _options.RESUME; }
 
 void BendersBase::UpdateMaxNumberIterationResumeMode(
@@ -785,7 +868,7 @@ void BendersBase::UpdateMaxNumberIterationResumeMode(
   }
 }
 
-double BendersBase::execution_time() const { return _data.elapsed_time; }
+double BendersBase::execution_time() const { return _data.benders_time; }
 LogData BendersBase::GetBestIterationData() const {
   return best_iteration_data;
 }
@@ -826,17 +909,187 @@ void BendersBase::SaveCurrentBendersData() {
     PrintCurrentIterationCsv();
   }
 }
-void BendersBase::ClearCurrentIterationCutTrace() const {
-  relevantIterationData_.last->_cut_trace.clear();
+void BendersBase::ClearCurrentIterationCutTrace() {
+  relevantIterationData_.last._cut_trace.clear();
 }
 void BendersBase::EndWritingInOutputFile() const {
   _writer->updateEndTime();
-  _writer->write_duration(_data.elapsed_time);
-  SaveSolutionInOutputFile();
+  // TODO duration for outer loop
+  _writer->write_duration(_data.benders_time);
+  if (!_options.EXTERNAL_LOOP_OPTIONS.DO_OUTER_LOOP) {
+    SaveSolutionInOutputFile();
+  }
 }
+
 double BendersBase::GetBendersTime() const { return benders_timer.elapsed(); }
 void BendersBase::write_basis() const {
   const auto filename(std::filesystem::path(_options.OUTPUTROOT) /
                       (_options.LAST_MASTER_BASIS));
   _master->write_basis(filename);
 }
+
+WorkerMasterDataVect BendersBase::AllCuts() const {
+  return workerMasterDataVect_;
+}
+
+int BendersBase::MasterRowIndex(const std::string &row_name) const {
+  return _master->RowIndex(row_name);
+}
+
+void BendersBase::MasterChangeRhs(int id_row, double val) const {
+  _master->ChangeRhs(id_row, val);
+}
+
+void BendersBase::MasterGetRhs(double &rhs, int id_row) const {
+  _master->GetRhs(&rhs, id_row);
+}
+
+void BendersBase::MasterAddRows(
+    std::vector<char> const &qrtype_p, std::vector<double> const &rhs_p,
+    std::vector<double> const &range_p, std::vector<int> const &mstart_p,
+    std::vector<int> const &mclind_p, std::vector<double> const &dmatval_p,
+    const std::vector<std::string> &row_names) const {
+  _master->AddRows(qrtype_p, rhs_p, range_p, mstart_p, mclind_p, dmatval_p,
+                   row_names);
+}
+void BendersBase::ResetMasterFromLastIteration() {
+  reset_master<WorkerMaster>(master_variable_map_, LastMasterPath(),
+                                get_solver_name(), get_log_level(),
+                                _data.nsubproblem, solver_log_manager_,
+                                IsResumeMode(), _logger);
+}
+bool BendersBase::MasterIsEmpty() const { return master_is_empty_; }
+
+std::vector<double> BendersBase::MasterObjectiveFunctionCoeffs() const {
+  int ncols = _master->_solver->get_ncols();
+  std::vector<double> obj(ncols);
+  _master->_solver->get_obj(obj.data(), 0, ncols - 1);
+  return obj;
+}
+
+void BendersBase::MasterRowsCoeffs(std::vector<int> &mstart,
+                                   std::vector<int> &mclind,
+                                   std::vector<double> &dmatval, int size,
+                                   std::vector<int> &nels, int first,
+                                   int last) const {
+  _master->_solver->get_rows(mstart.data(), mclind.data(), dmatval.data(), size,
+                             nels.data(), first, last);
+}
+int BendersBase::MasterGetNElems() const {
+  return _master->_solver->get_nelems();
+}
+void BendersBase::SetMasterObjectiveFunctionCoeffsToZeros() const {
+  // assuming that master var id are in [0, size-1]
+  auto master_vars_size = master_variable_map_.size();
+  std::vector<double> zeros(master_vars_size, 0.0);
+  SetMasterObjectiveFunction(zeros.data(), 0, master_vars_size - 1);
+}
+
+void BendersBase::SetMasterObjectiveFunction(const double *coeffs, int first,
+                                             int last) const {
+  _master->_solver->set_obj(coeffs, first, last);
+}
+
+int BendersBase::MasterGetnrows() const { return _master->Getnrows(); }
+int BendersBase::MasterGetncols() const { return _master->Getncols(); }
+void BendersBase::MasterGetRowType(std::vector<char> &qrtype, int first,
+                                   int last) const {
+  _master->_solver->get_row_type(qrtype.data(), first, last);
+}
+
+WorkerMasterData BendersBase::BestIterationWorkerMaster() const {
+  return relevantIterationData_.best;
+}
+
+void BendersBase::InitExternalValues(bool is_bilevel_check_all, double lambda) {
+  // _data.outer_loop_current_iteration_data.outer_loop_criterion = 0;
+  // _data.outer_loop_current_iteration_data.benders_num_run = 1;
+  is_bilevel_check_all_ = is_bilevel_check_all;
+  outer_loop_biLevel_.Init(MasterObjectiveFunctionCoeffs(),
+                           BestIterationWorkerMaster().get_max_invest(),
+                           MasterVariables());
+  outer_loop_biLevel_.SetLambda(lambda);
+}
+
+CurrentIterationData BendersBase::GetCurrentIterationData() const {
+  return _data;
+}
+OuterLoopCurrentIterationData BendersBase::GetOuterLoopData() const {
+  return _data.outer_loop_current_iteration_data;
+}
+std::vector<double> BendersBase::GetOuterLoopCriterionAtBestBenders() const {
+  return ((outer_loop_criterion_.empty())
+              ? std::vector<double>()
+              : outer_loop_criterion_[_data.best_it - 1]);
+}
+
+std::vector<double> BendersBase::ComputeOuterLoopCriterion(
+    const std::string &subproblem_name,
+    const std::vector<double> &sub_problem_solution) {
+  auto outer_loop_input_size = var_indices_.size(); // num of patterns
+  std::vector<double> outer_loop_criterion_per_sub_problem(outer_loop_input_size,
+                                                           {});
+  auto subproblem_weight = SubproblemWeight(_data.nsubproblem, subproblem_name);
+  double criterion_count_threshold =
+      outer_loop_input_data_.CriterionCountThreshold();
+  auto number_of_scenarios =
+      _options.EXTERNAL_LOOP_OPTIONS.OUTER_LOOP_NUMBER_OF_SCENARIOS;
+
+  for (int pattern_index(0); pattern_index < outer_loop_input_size;
+       ++pattern_index) {
+    auto pattern_variables_indices = var_indices_[pattern_index];
+    for (auto variables_index : pattern_variables_indices) {
+      if (auto solution = sub_problem_solution[variables_index];
+          solution > criterion_count_threshold)
+        // 1h of no supplied energy
+        outer_loop_criterion_per_sub_problem[pattern_index] +=
+            subproblem_weight;
+    }
+  }
+  return outer_loop_criterion_per_sub_problem;
+}
+
+double BendersBase::ExternalLoopLambdaMax() const {
+  return outer_loop_biLevel_.LambdaMax();
+}
+double BendersBase::ExternalLoopLambdaMin() const {
+  return outer_loop_biLevel_.LambdaMin();
+}
+
+void BendersBase::init_data(double external_loop_lambda,
+                            double external_loop_lambda_min,
+                            double external_loop_lambda_max) {
+  benders_timer.restart();
+  auto benders_num_run =
+      _data.outer_loop_current_iteration_data.benders_num_run;
+  auto outer_loop_bilevel_best_ub =
+      _data.outer_loop_current_iteration_data.outer_loop_bilevel_best_ub;
+  init_data();
+  _data.outer_loop_current_iteration_data.outer_loop_criterion.clear();
+  _data.outer_loop_current_iteration_data.benders_num_run = benders_num_run;
+  _data.outer_loop_current_iteration_data.outer_loop_bilevel_best_ub =
+      outer_loop_bilevel_best_ub;
+  _data.outer_loop_current_iteration_data.external_loop_lambda =
+      external_loop_lambda;
+  _data.outer_loop_current_iteration_data.external_loop_lambda_min =
+      external_loop_lambda_min;
+  _data.outer_loop_current_iteration_data.external_loop_lambda_max =
+      external_loop_lambda_max;
+}
+
+bool BendersBase::ExternalLoopFoundFeasible() const {
+  return outer_loop_biLevel_.FoundFeasible();
+}
+double BendersBase::OuterLoopStoppingThreshold() const { return outer_loop_input_data_.StoppingThreshold(); }
+
+void BendersBase::UpdateOuterLoopMaxCriterionArea()  {
+  auto criterions_begin =
+      _data.outer_loop_current_iteration_data.outer_loop_criterion.cbegin();
+  auto criterions_end =
+      _data.outer_loop_current_iteration_data.outer_loop_criterion.cend();
+  auto max_criterion_it = std::max_element(criterions_begin, criterions_end);
+  _data.outer_loop_current_iteration_data.max_criterion = *max_criterion_it;
+  auto  max_criterion_index = std::distance(criterions_begin, max_criterion_it);
+ _data.outer_loop_current_iteration_data.max_criterion_area = outer_loop_input_data_.OuterLoopData()[max_criterion_index].Pattern().GetBody();
+}
+bool BendersBase::isExceptionRaised() const { return exception_raised_; }

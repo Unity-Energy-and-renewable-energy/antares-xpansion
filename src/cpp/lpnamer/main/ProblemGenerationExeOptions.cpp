@@ -1,14 +1,15 @@
 #include "ProblemGenerationExeOptions.h"
 namespace po = boost::program_options;
+using namespace std::string_literals;
 
 ProblemGenerationExeOptions::ProblemGenerationExeOptions()
     : OptionsParser("Problem Generation exe") {
   AddOptions()("help,h", "produce help message")(
-      "output,o",
-      po::value<std::filesystem::path>(&xpansion_output_dir_)->required(),
+      "output,o", po::value<std::filesystem::path>(&xpansion_output_dir_),
       "antares-xpansion study output")(
-      "archive,a", po::value<std::filesystem::path>(&archive_path_)->required(),
+      "archive,a", po::value<std::filesystem::path>(&archive_path_),
       "antares-xpansion study zip")(
+      "study", po::value<std::filesystem::path>(&study_path_), "antares study")(
       "formulation,f",
       po::value<std::string>(&master_formulation_)->default_value("relaxed"),
       "master formulation (relaxed or integer)")(
@@ -20,4 +21,49 @@ ProblemGenerationExeOptions::ProblemGenerationExeOptions()
       "user weights file")("unnamed-problems,n",
                            po::bool_switch(&unnamed_problems_),
                            "use this option if unnamed problems are provided");
+}
+void ProblemGenerationExeOptions::Parse(unsigned int argc,
+                                        const char* const* argv) {
+  OptionsParser::Parse(argc, argv);
+  auto log_location = LOGLOCATION;
+  checkMandatoryOptions(log_location);
+}
+
+auto ProblemGenerationExeOptions::exclusiveMandatoryParameters() const {
+  return std::vector{this->XpansionOutputDir().string(),
+           this->ArchivePath().string(),
+           this->StudyPath().string()};
+}
+
+namespace {
+auto notEmpty = [](auto k) { return !k.empty(); };
+}
+void ProblemGenerationExeOptions::checkMandatoryOptions(
+    const std::string& log_location) const {
+  auto args = exclusiveMandatoryParameters();
+  auto count = std::ranges::count_if(args, notEmpty);
+  if (count > 1) {
+    auto msg = "Only one of [archive, output, study] parameters is accepted"s;
+    throw ProblemGenerationOptions::ConflictingParameters(msg, log_location);
+  }
+  if (count == 0) {
+    auto msg =
+        "Need to give at least on of [OutputDir, Archive, Study] options"s;
+    throw ProblemGenerationOptions::MissingParameters(msg, log_location);
+  }
+}
+
+std::filesystem::path ProblemGenerationExeOptions::deduceXpansionDirIfEmpty(
+    std::filesystem::path xpansion_output_dir,
+    const std::filesystem::path& archive_path) const {
+  if (xpansion_output_dir.empty() && !archive_path.empty()) {
+    auto deduced_dir = archive_path;
+    deduced_dir = deduced_dir.replace_filename(
+        deduced_dir.stem().replace_extension("").string() + "-Xpansion"s);
+    return deduced_dir;
+  }
+  return xpansion_output_dir;
+}
+std::filesystem::path ProblemGenerationExeOptions::StudyPath() const {
+  return study_path_;
 }

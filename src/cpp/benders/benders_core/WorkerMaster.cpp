@@ -1,6 +1,6 @@
 #include "WorkerMaster.h"
 
-#include "glog/logging.h"
+
 #include "solver_utils.h"
 
 WorkerMaster::WorkerMaster(Logger logger) : Worker(logger) {
@@ -19,18 +19,17 @@ WorkerMaster::WorkerMaster(Logger logger) : Worker(logger) {
  *  \param log_level : solver log level
  *  \param subproblems_count : number of subproblems
  */
-WorkerMaster::WorkerMaster(VariableMap const &variable_map,
-                           const std::filesystem::path &path_to_mps,
-                           const std::string &solver_name, const int log_level,
-                           int subproblems_count,
-                           const std::filesystem::path &log_name,
-                           const bool mps_has_alpha, Logger logger)
-    : Worker(logger),
+WorkerMaster::WorkerMaster(
+    VariableMap const &variable_map, const std::filesystem::path &path_to_mps,
+    const std::string &solver_name, const int log_level, int subproblems_count,
+    SolverLogManager&solver_log_manager,
+    const bool mps_has_alpha, Logger logger)
+    : Worker(std::move(logger)),
       subproblems_count(subproblems_count),
       _mps_has_alpha(mps_has_alpha) {
   _is_master = true;
 
-  init(variable_map, path_to_mps, solver_name, log_level, log_name);
+  init(variable_map, path_to_mps, solver_name, log_level, solver_log_manager);
   if (!_mps_has_alpha) {
     _set_upper_bounds();
   }
@@ -57,7 +56,7 @@ void WorkerMaster::get(Point &x_out, double &overall_subpb_cost_under_approx,
   if (_solver->get_n_integer_vars() > 0) {
     _solver->get_mip_sol(ptr.data());
   } else {
-    _solver->get_lp_sol(ptr.data(), NULL, NULL);
+    _solver->get_lp_sol(ptr.data(), nullptr, nullptr);
   }
   assert(id_single_subpb_costs_under_approx_.back() + 1 == ptr.size());
   for (auto const &kvp : _id_to_name) {
@@ -213,7 +212,8 @@ void WorkerMaster::define_matval_mclind_for_index(
 // TODO : Refactor this with add_cut and define_matval_mclind(_for_index)
 void WorkerMaster::addSubproblemCut(int i, Point const &s, Point const &x_cut,
                                     double const &rhs) const {
-  // cut is -rhs >= overall_subpb_cost_under_approx  + s^(x-x_cut)
+  // cut is -theta_i + s.x <= -subproblem_cost + s.x_cut (in the solver)
+  // i.e. theta_i >= subproblem_cost + s.(x - x_cut) (human form)
   int ncoeffs(1 + (int)s.size());
   std::vector<char> rowtype(1, 'L');
   std::vector<double> rowrhs(1, 0);
@@ -301,9 +301,7 @@ void WorkerMaster::_set_alpha_var() {
       solver_addrows(*_solver, rowtype, rowrhs, {}, mstart, mclind, matval);
     }
   } else {
-    LOG(INFO)
-        << "ERROR a variable named overall_subpb_cost_under_approx is in input"
-        << std::endl;
+    logger_->display_message("ERROR a variable named overall_subpb_cost_under_approx is in input", LogUtils::LOGLEVEL::ERR);
   }
 }
 

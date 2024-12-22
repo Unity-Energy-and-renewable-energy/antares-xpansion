@@ -7,27 +7,6 @@
 #include "RandomDirGenerator.h"
 #include "gtest/gtest.h"
 
-class FakeWorkerMaster : public WorkerMaster {
- public:
-  WorkerMasterPtr worker_master;
-
-  FakeWorkerMaster(WorkerMasterPtr worker_master)
-      : WorkerMaster(worker_master->logger_), worker_master(worker_master){};
-  std::vector<int> get_id_nb_units() const override {
-    return worker_master->get_id_nb_units();
-  };
-
-  void DeactivateIntegrityConstraints() const override {
-    worker_master->DeactivateIntegrityConstraints();
-  };
-
-  void ActivateIntegrityConstraints() const override {
-    worker_master->ActivateIntegrityConstraints();
-  };
-
-  SolverAbstract::Ptr solver() const override { return worker_master->_solver; }
-};
-
 class BendersSequentialDouble : public BendersSequential {
  public:
   bool parametrized_stop = false;
@@ -42,9 +21,10 @@ class BendersSequentialDouble : public BendersSequential {
   bool _setDataPreRelaxationCall = false;
   bool _setDataPostRelaxationCall = false;
 
-  explicit BendersSequentialDouble(BendersBaseOptions const &options,
-                                   Logger &logger, Writer writer)
-      : BendersSequential(options, logger, writer){};
+  explicit BendersSequentialDouble(
+      BendersBaseOptions const &options, Logger &logger, Writer writer,
+      std::shared_ptr<MathLoggerDriver> mathLoggerDriver)
+      : BendersSequential(options, logger, writer, mathLoggerDriver){};
 
   void init_data() override {
     BendersBase::init_data();
@@ -55,7 +35,7 @@ class BendersSequentialDouble : public BendersSequential {
     _data.it = parametrized_it;
   };
 
-  [[nodiscard]] WorkerMasterPtr get_master() const {
+  [[nodiscard]] WorkerMasterPtr get_master() const override {
     return BendersSequential::get_master();
   };
 
@@ -63,26 +43,21 @@ class BendersSequentialDouble : public BendersSequential {
   void BuildCut() override{};
   void compute_ub() override { _data.ub = parametrized_ub; };
   CurrentIterationData get_data() const { return _data; }
-  void build_input_map() override{};
   void write_basis() const override{};
   void EndWritingInOutputFile() const override{};
   void UpdateTrace() override{};
   void post_run_actions() const override{};
   void SaveCurrentBendersData() override{};
-  void reset_master(WorkerMaster *worker_master) override {
-    WorkerMasterPtr var;
-    var.reset(worker_master);
-    BendersBase::reset_master(new FakeWorkerMaster(var));
-  };
   void free() override{};
   void InitializeProblems() override {
     MatchProblemToId();
 
-    reset_master(new WorkerMaster(master_variable_map, get_master_path(),
+    auto solver_log_manager = SolverLogManager(solver_log_file());
+    reset_master<WorkerMaster>(master_variable_map_, get_master_path(),
                                   get_solver_name(), get_log_level(),
-                                  _data.nsubproblem, log_name(), IsResumeMode(),
-                                  _logger));
-    for (const auto &problem : coupling_map) {
+                                  _data.nsubproblem, solver_log_manager,
+                                  IsResumeMode(), _logger);
+    for (const auto &problem : coupling_map_) {
       const auto subProblemFilePath = GetSubproblemPath(problem.first);
       AddSubproblem(problem);
       AddSubproblemName(problem.first);
@@ -130,6 +105,7 @@ class BendersSequentialDouble : public BendersSequential {
 class BendersSequentialTest : public ::testing::Test {
  public:
   Logger logger;
+  std::shared_ptr<MathLoggerDriver> mathLoggerDriver;
   Writer writer;
   const std::filesystem::path data_test_dir = "data_test";
   const std::filesystem::path mps_dir = data_test_dir / "mps";
@@ -195,7 +171,7 @@ class BendersSequentialTest : public ::testing::Test {
       double sep_param) {
     BendersBaseOptions options = init_benders_options(
         master_formulation, max_iter, relaxed_gap, sep_param);
-    return BendersSequentialDouble(options, logger, writer);
+    return BendersSequentialDouble(options, logger, writer, mathLoggerDriver);
   }
 
   std::vector<char> get_nb_units_col_types(

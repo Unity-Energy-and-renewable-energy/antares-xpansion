@@ -16,12 +16,13 @@ class ConfigParameters:
     ANTARES: str
     MERGE_MPS: str
     BENDERS: str
-    BENDERS_BY_BATCH: str
     LP_NAMER: str
     STUDY_UPDATER: str
     SENSITIVITY_EXE: str
     FULL_RUN: str
+    OUTER_LOOP: str
     ANTARES_ARCHIVE_UPDATER: str
+    MPIEXEC: str
     AVAILABLE_SOLVERS: List[str]
 
 
@@ -37,6 +38,7 @@ class InputParameters:
     keep_mps: bool
     oversubscribe: bool
     allow_run_as_root: bool
+    memory: bool
 
 
 class XpansionConfig:
@@ -56,14 +58,15 @@ class XpansionConfig:
         self.ANTARES: str = ""
         self.MERGE_MPS: str = ""
         self.BENDERS: str = ""
-        self.BENDERS_BY_BATCH: str = ""
         self.LP_NAMER: str = ""
         self.STUDY_UPDATER: str = ""
         self.SENSITIVITY_EXE: str = ""
         self.FULL_RUN: str = ""
+        self.OUTER_LOOP: str = ""
         self.ANTARES_ARCHIVE_UPDATER: str = ""
         self.MPI_LAUNCHER: str = ""
         self.MPI_N: str = ""
+        self.MPIEXEC: str = ""
         self.AVAILABLE_SOLVER: List[str]
 
         self._get_config_values()
@@ -84,6 +87,7 @@ class XpansionConfig:
         self.keep_mps = self.input_parameters.keep_mps
         self.oversubscribe = self.input_parameters.oversubscribe
         self.allow_run_as_root = self.input_parameters.allow_run_as_root
+        self.memory = self.input_parameters.memory
 
     def _get_install_dir(self, install_dir):
         if install_dir is None:
@@ -144,6 +148,8 @@ class XpansionConfig:
         self.LAST_MASTER_BASIS = "master_last_basis.bss"
         self.WEIGHTS = "weights"
         self.CONSTRAINTS = "constraints"
+        self.OUTER_LOOP_FILE = "outer_loop.yml"
+        self.OUTER_LOOP_DIR = "outer_loop"
 
     def _set_default_settings(self):
         self.settings_default = {
@@ -239,10 +245,11 @@ class XpansionConfig:
         self.ANTARES = self.config_parameters.ANTARES
         self.MERGE_MPS = self.config_parameters.MERGE_MPS
         self.BENDERS = self.config_parameters.BENDERS
-        self.BENDERS_BY_BATCH = self.config_parameters.BENDERS_BY_BATCH
         self.LP_NAMER = self.config_parameters.LP_NAMER
         self.STUDY_UPDATER = self.config_parameters.STUDY_UPDATER
         self.FULL_RUN = self.config_parameters.FULL_RUN
+        self.OUTER_LOOP = self.config_parameters.OUTER_LOOP
         self.ANTARES_ARCHIVE_UPDATER = self.config_parameters.ANTARES_ARCHIVE_UPDATER
         self.SENSITIVITY_EXE = self.config_parameters.SENSITIVITY_EXE
+        self.MPIEXEC = self.config_parameters.MPIEXEC
         self.AVAILABLE_SOLVER = self.config_parameters.AVAILABLE_SOLVERS

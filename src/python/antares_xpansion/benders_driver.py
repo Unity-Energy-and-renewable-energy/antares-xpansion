@@ -10,19 +10,30 @@ from pathlib import Path
 
 from antares_xpansion.logger import step_logger
 from antares_xpansion.study_output_cleaner import StudyOutputCleaner
+from dataclasses import dataclass
 
+
+@dataclass
+class SolversExe:
+    benders: Path
+    merge_mps: Path
+    outer_loop: Path
 
 class BendersDriver:
-    def __init__(self, benders, benders_by_batch, merge_mps, options_file) -> None:
+
+    def __init__(self, solvers_exe: SolversExe, options_file, mpiexec=None) -> None:
 
         self.oversubscribe = False
         self.allow_run_as_root = False
-        self.benders = benders
-        self.merge_mps = merge_mps
-        self.benders_by_batch = benders_by_batch
+        self.benders = solvers_exe.benders
+        self.merge_mps = solvers_exe.merge_mps
+        self.outer_loop = solvers_exe.outer_loop
+        self.mpiexec = mpiexec
+        self.method = "benders"
+        self.n_mpi = 1
         self.logger = step_logger(__name__, __class__.__name__)
 
-        if (options_file != ""):
+        if options_file != "":
             self.options_file = options_file
         else:
             raise BendersDriver.BendersOptionsFileError(
@@ -90,10 +101,10 @@ class BendersDriver:
     def set_solver(self):
         if self.method == "benders":
             self.solver = self.benders
+        elif self.method == "outer_loop":
+            self.solver = self.outer_loop
         elif self.method == "mergeMPS":
             self.solver = self.merge_mps
-        elif self.method == "benders_by_batch":
-            self.solver = self.benders_by_batch
         else:
             self.logger.error("Illegal optim method")
             raise BendersDriver.BendersSolverError(
@@ -135,7 +146,7 @@ class BendersDriver:
 
     def _initialise_system_specific_mpi_vars(self):
         if sys.platform.startswith("win32"):
-            self.MPI_LAUNCHER = "mpiexec"
+            self.MPI_LAUNCHER = self.mpiexec
         elif sys.platform.startswith("linux"):
             self.MPI_LAUNCHER = "mpirun"
         else:
