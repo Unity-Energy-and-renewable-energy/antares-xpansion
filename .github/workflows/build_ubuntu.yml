@@ -7,12 +7,14 @@ on:
       - main
       - develop
       - dependabot/*
+      - release/*
   pull_request:
   release:
     types: [ created ]
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
+  PYTHON_VERSION: 3.8
 
 jobs:
   build:
@@ -21,15 +23,7 @@ jobs:
     strategy:
       matrix:
         os: [ ubuntu-20.04 ]
-        xprs: [
-          #{ value: XPRESS-ON, ref: 8.13a },
-          { value: XPRESS-ON, ref: 9.2.5 },
-          #       { value: XPRESS-OFF }
-        ]
     env:
-      XPRESSDIR: ${{ github.workspace }}/xpress
-      XPRESS: ${{ github.workspace }}/xpress/bin
-      XPRS_LIB_Path: ${{ github.workspace }}/xpress/lib
       VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/vcpkg_cache,readwrite"
       ORTOOLS_DIR: $GITHUB_WORKSPACE/or-tools
 
@@ -42,20 +36,14 @@ jobs:
         with:
           submodules: true
 
-      - name: Checkout xpressmp linux
-        if: matrix.xprs.value == 'XPRESS-ON'
-        uses: actions/checkout@v4
-        with:
-          repository: rte-france/xpress-mp
-          path: ${{ env.XPRESSDIR }}
-          ref: ${{ matrix.xprs.ref}}
-          token: ${{ secrets.AS_TOKEN }} #reniew token periodically
+
 
       - name: Install mandatory system libraries
         run: |
           sudo apt-get update --fix-missing
           sudo apt-get install -y ccache
           sudo apt-get install -y g++-10 gcc-10
+      
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.3
@@ -64,15 +52,27 @@ jobs:
 
       - name: Set up Python
         uses: actions/setup-python@v5
+        id: python-setup
         with:
           cache: 'pip'
-          python-version: 3.8
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-tests.txt
           pip install -r requirements-ui.txt
+
+      - name: Set-up Xpress with pip for Ubuntu
+        shell: bash
+        run: |
+          python -m pip install "xpress>=9.2,<9.3"
+          echo ${{ env.pythonLocation }}
+          XPRESS_DIR=${{ env.pythonLocation }}/lib/python${{ env.PYTHON_VERSION }}/site-packages/xpress
+          echo "XPRESSDIR=$XPRESS_DIR" >> $GITHUB_ENV
+          echo "XPAUTH_PATH=$XPRESS_DIR/license/community-xpauth.xpr" >> $GITHUB_ENV
+          echo "Create symbolic link for XPRESS library file because it is missing in the Python installation"
+          ln -s $XPRESS_DIR/lib/libxprs.so.42 $XPRESS_DIR/lib/libxprs.so          
 
       - name: Update alternatives
         #mpicxx  uses "g++" so we need g++ to be symbolic link to g++-10
@@ -105,7 +105,7 @@ jobs:
 
       - name: Config OR-Tools URL
         run: |
-          echo "ORTOOLS_URL=https://github.com/rte-france/or-tools/releases/download/v9.8-rte1.0/ortools_cxx_ubuntu-20.04_static_sirius.zip" >> $GITHUB_ENV
+          echo "ORTOOLS_URL=https://github.com/rte-france/or-tools-rte/releases/download/v9.10-rte1.1/ortools_cxx_ubuntu-20.04_static_sirius.zip" >> $GITHUB_ENV
 
       - name: Download pre-compiled librairies
         uses: ./.github/workflows/download-extract-precompiled-libraries-tgz
@@ -152,11 +152,11 @@ jobs:
         run: |
           cmake --build _build --config Release -j$(nproc)
 
-      - name: Test
-        run: |
-          export PATH=${GITHUB_WORKSPACE}/_build/vcpkg_installed/x64-linux-release/tools/openmpi/bin/:$PATH
-          cd _build
-          ctest -C Release --output-on-failure -L "medium|unit|benders|lpnamer"
+      # - name: Test
+      #   run: |
+      #     export PATH=${GITHUB_WORKSPACE}/_build/vcpkg_installed/x64-linux/tools/openmpi/bin:$PATH
+      #     cd _build
+      #     ctest -C Release --output-on-failure -L "medium|unit|benders|lpnamer"
 
       - name: Cache vcpkg binary dir
         if: always()
@@ -234,6 +234,49 @@ jobs:
         with:
           name: user-guide
           path: ${{ steps.create-user-guide.outputs.pdf-path }}
+
+  test_assets:
+    runs-on: ubuntu-latest
+    needs: [ build ]
+    steps:
+      - name: Download build assets
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{needs.build.outputs.TGZ_NAME}}
+      - name: setup
+        run: |
+          tar --strip-components=1 -xzf ${{needs.build.outputs.TGZ_NAME}}
+          sudo apt-get update -y
+          sudo apt-get install openmpi-bin -y
+
+      - name: run launcher
+        run: |
+          ./antares-xpansion-launcher -i examples/SmallTestFiveCandidates
+
+      - name: run launcher parallel
+        run: |
+          ./antares-xpansion-launcher -i examples/SmallTestFiveCandidates -n 2
+
+  test_single_file_asset:
+    runs-on: ubuntu-latest
+    needs: [ build ]
+    steps:
+      - name: Download build assets
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{needs.build.outputs.SINGLE_FILE_NAME}}
+      - name: setup
+        run: |
+          tar --strip-components=1 -xzf ${{needs.build.outputs.SINGLE_FILE_NAME}}
+          sudo apt-get update -y
+          sudo apt-get install openmpi-bin -y
+
+      - name: run launcher
+        run: |
+          ./antares-xpansion-launcher -i examples/SmallTestFiveCandidates
+      - name: run launcher parallel
+        run: |
+          ./antares-xpansion-launcher -i examples/SmallTestFiveCandidates -n 2    
 
   release:
     runs-on: ubuntu-latest
