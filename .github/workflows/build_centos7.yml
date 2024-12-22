@@ -152,7 +152,7 @@ jobs:
 
       - name: Restore vcpkg binary dir from cache
         id: cache-vcpkg-binary
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_CACHE_DIR }}
           key: vcpkg-cache-centOS-${{ hashFiles('src/vcpkg.json', '.git/modules/vcpkg/HEAD') }}
@@ -200,7 +200,7 @@ jobs:
       - name: Cache vcpkg binary dir
         if: always()
         id: save-cache-vcpkg-binary
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_CACHE_DIR }}
           key: vcpkg-cache-centOS-${{ hashFiles('src/vcpkg.json', '.git/modules/vcpkg/HEAD') }}
